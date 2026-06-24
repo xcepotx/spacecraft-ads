@@ -1,0 +1,67 @@
+# Environment dan secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets/
+credentials/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime storage
+storage/*
+!storage/.gitkeep
+uploads/
+media/
+output/
+outputs/
+renders/
+thumbnails/
+temp/
+tmp/
+
+# Database dan cache
+*.db
+*.sqlite
+*.sqlite3
+dump.sql
+*.dump
+redis-data/
+postgres-data/
+
+# Logs
+*.log
+logs/
+
+# Backup patch
+backups/
+backup/
+*.bak
+*.backup
+*.tar
+*.tar.gz
+*.zip
+
+# OS dan editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Generated files
+backend/app/static/generated/

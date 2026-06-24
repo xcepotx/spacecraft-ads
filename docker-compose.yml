@@ -1,0 +1,89 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - product_ads_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [product_ads_network]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - product_ads_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [product_ads_network]
+
+  app:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file: [.env]
+    ports:
+      - 127.0.0.1:8200:8000
+    volumes:
+      - ./storage:/app/storage
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [product_ads_network]
+
+  worker:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    env_file: [.env]
+    volumes:
+      - ./storage:/app/storage
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [product_ads_network]
+
+
+  automation:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    command:
+      [
+        "python",
+        "-m",
+        "app.automation_scheduler"
+      ]
+    env_file: [.env]
+    volumes:
+      - ./storage:/app/storage
+    depends_on:
+      app:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    networks: [product_ads_network]
+
+volumes:
+  product_ads_postgres:
+  product_ads_redis:
+
+networks:
+  product_ads_network:
+    driver: bridge

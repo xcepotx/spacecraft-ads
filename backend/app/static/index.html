@@ -1,0 +1,717 @@
+<!doctype html>
+<html lang="id">
+<head>
+    <meta charset="utf-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
+    <title>Spacecraft Product Ads Studio</title>
+
+    <link
+        rel="stylesheet"
+        href="/static/app.css?v=workspace-polish-20260624-004251"
+    >
+</head>
+
+<body>
+<header class="topbar">
+    <div>
+        <div class="brand-row">
+            <span class="brand-badge">SC</span>
+
+            <div>
+                <h1>Product Ads Studio</h1>
+                <p>
+                    Spacecraft Creative Production Workspace
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <div class="topbar-actions">
+        <button
+            id="multiProductMenuButton"
+            class="button secondary"
+            type="button"
+        >
+            Multi Produk
+        </button>
+
+        <button
+            id="syncButton"
+            class="button primary"
+        >
+            Sinkronkan Spacecraft
+        </button>
+
+        <button
+            id="logoutButton"
+            class="button secondary"
+            type="button"
+        >
+            Logout
+        </button>
+    </div>
+</header>
+
+<main class="page">
+    <section class="hero">
+        <div>
+            <span class="eyebrow">
+                CREATIVE AUTOMATION
+            </span>
+
+            <h2>
+                Ubah katalog menjadi creative ads
+            </h2>
+
+            <p>
+                Pilih produk, tambahkan foto atau video,
+                lalu hasilkan hook, angle iklan,
+                dan storyboard.
+            </p>
+        </div>
+
+        
+    </section>
+
+    <section class="toolbar">
+        <input
+            id="searchInput"
+            class="input"
+            placeholder="Cari nama produk, SKU, atau slug..."
+        >
+
+        <button
+            id="searchButton"
+            class="button secondary"
+        >
+            Cari
+        </button>
+    </section>
+
+    <section
+        id="multiProductSection"
+        class="multi-product-panel"
+    >
+        <div class="analysis-header">
+            <div>
+                <span class="eyebrow">RAW VIDEO CATALOG ADS</span>
+                <h3>Gabungkan raw video real beberapa produk</h3>
+                <p class="analysis-meta">
+                    Pilih raw video real per produk, atur urutan, lalu jadikan satu iklan katalog dengan hook, CTA, promo, dan voice-over.
+                </p>
+            </div>
+        </div>
+
+        <section class="creative-template-panel">
+            <div class="creative-template-copy">
+                <span class="eyebrow">
+                    CREATIVE PRESET
+                </span>
+
+                <strong>
+                    Pilih strategi iklan
+                </strong>
+
+                <p id="creativeTemplateDescription">
+                    Bundle produk dengan penawaran hemat,
+                    voice-over, dan background music.
+                </p>
+            </div>
+
+            <div class="creative-template-control">
+                <label>Template</label>
+
+                <select
+                    id="multiCampaignTemplate"
+                    onchange="applyCreativeTemplate()"
+                >
+                    <option value="retail_fast">
+                        Retail Cepat Closing
+                    </option>
+
+                    <option
+                        value="bundle_hemat"
+                        selected
+                    >
+                        Bundle Hemat
+                    </option>
+
+                    <option value="reseller">
+                        Reseller
+                    </option>
+
+                    <option value="flash_sale">
+                        Flash Sale
+                    </option>
+
+                    <option value="product_showcase">
+                        Product Showcase
+                    </option>
+
+                    <option value="custom_manual">
+                        Custom Manual
+                    </option>
+                </select>
+            </div>
+
+            <div class="creative-template-actions">
+                <span
+                    id="creativeTemplateBadge"
+                    class="creative-template-badge"
+                >
+                    Bundle Hemat
+                </span>
+
+                <button
+                    type="button"
+                    class="mini-button"
+                    onclick="resetCreativeTemplateManual()"
+                >
+                    Mode Manual
+                </button>
+            </div>
+        </section>
+
+        <div
+            id="creativeTemplateNotice"
+            class="creative-template-notice"
+        ></div>
+
+        <div class="multi-product-controls">
+            <div class="field">
+                <label>Nama Campaign</label>
+                <input
+                    id="multiCampaignName"
+                    placeholder="Contoh: Bundle Keychain Juni"
+                >
+            </div>
+
+            <div class="field">
+                <label>Variasi</label>
+                <input
+                    id="multiCampaignVariations"
+                    type="number"
+                    min="1"
+                    max="50"
+                    value="5"
+                >
+            </div>
+
+            <div class="field">
+                <label>Audience</label>
+                <select id="multiCampaignAudience">
+                    <option value="retail">Retail satuan</option>
+                    <option value="retail_bulk" selected>Bundle Hemat</option>
+                    <option value="reseller">Reseller</option>
+                    <option value="custom_bulk">Custom / Bulk</option>
+                </select>
+            </div>
+
+            <div class="field">
+                <label>Durasi</label>
+                <select id="multiCampaignDuration" onchange="renderCatalogPreflight()">
+                    <option value="20">
+                        20 detik
+                    </option>
+                    <option value="25" selected>
+                        25 detik
+                    </option>
+                    <option value="30">
+                        30 detik
+                    </option>
+                </select>
+            </div>
+
+            <div class="field">
+                <label>Format</label>
+                <select
+                    id="multiCampaignAspect"
+                    onchange="renderCatalogPreflight()"
+                >
+                    <option value="9:16">9:16 Reels</option>
+                    <option value="1:1">1:1 Feed</option>
+                    <option value="16:9">16:9 Landscape</option>
+                </select>
+            </div>
+            <div class="field">
+                <label>Export Preset</label>
+
+                <select
+                    id="multiCampaignExportPreset"
+                    onchange="applyExportPreset()"
+                >
+                    <option
+                        value="meta_reels"
+                        selected
+                    >
+                        Meta Reels 9:16
+                    </option>
+
+                    <option value="tiktok">
+                        TikTok 9:16
+                    </option>
+
+                    <option value="instagram_feed">
+                        Instagram Feed 1:1
+                    </option>
+
+                    <option value="youtube_landscape">
+                        YouTube Landscape 16:9
+                    </option>
+
+                    <option value="custom">
+                        Custom
+                    </option>
+                </select>
+            </div>
+
+        </div>
+
+        <div class="multi-promo-panel">
+            <div class="field">
+                <label class="voiceover-toggle">
+                    <input
+                        id="multiCampaignPromoEnabled"
+                        type="checkbox"
+                        onchange="toggleMultiPromoControls()"
+                    >
+                    Promo / Diskon
+                </label>
+                <p class="promo-help">
+                    Muncul di ending, di bawah daftar produk dan sebelum CTA.
+                </p>
+            </div>
+
+            <div
+                id="multiPromoControls"
+                class="promo-controls voiceover-disabled"
+            >
+                <div class="field">
+                    <label>Min. Belanja</label>
+                    <input
+                        id="multiCampaignPromoMinAmount"
+                        type="number"
+                        min="0"
+                        step="1000"
+                        value="100000"
+                        disabled
+                    >
+                </div>
+
+                <div class="field">
+                    <label>Diskon (%)</label>
+                    <input
+                        id="multiCampaignPromoDiscount"
+                        type="number"
+                        min="1"
+                        max="99"
+                        value="10"
+                        disabled
+                    >
+                </div>
+
+                <div class="field promo-text-field">
+                    <label>Teks Promo Custom</label>
+                    <input
+                        id="multiCampaignPromoText"
+                        placeholder="Kosongkan untuk auto: Diskon 10% di atas Rp100.000"
+                        disabled
+                    >
+                </div>
+            </div>
+        </div>
+
+        <div class="multi-voice-panel">
+            <div class="field">
+                <label class="voiceover-toggle">
+                    <input
+                        id="multiCampaignVoiceoverEnabled"
+                        type="checkbox"
+                        onchange="toggleMultiVoiceoverControls()"
+                    >
+                    Voice Over
+                </label>
+                <select
+                    id="multiCampaignVoiceId"
+                    onchange="rememberVoiceSelection()"
+                    disabled
+                >
+                    <option value="">Memuat daftar voice...</option>
+                </select>
+            </div>
+
+            <div
+                id="multiVoiceoverControls"
+                class="field voiceover-controls voiceover-disabled"
+            >
+                <label>Mode VO</label>
+                <select
+                    id="multiCampaignVoiceMode"
+                    onchange="toggleMultiCustomVoiceText()"
+                    disabled
+                >
+                    <option value="auto">Auto script</option>
+                    <option value="custom">Custom script</option>
+                </select>
+            </div>
+
+            <div
+                id="multiCustomVoiceTextWrap"
+                class="field custom-voice-text hidden"
+            >
+                <label>Custom VO</label>
+                <textarea
+                    id="multiCampaignVoiceText"
+                    rows="3"
+                    placeholder="Isi naskah voice-over khusus untuk raw video catalog"
+                ></textarea>
+            </div>
+        </div>
+
+        <section class="multi-music-panel">
+            <div class="music-panel-heading">
+                <div>
+                    <label class="voiceover-toggle">
+                        <input
+                            id="multiCampaignMusicEnabled"
+                            type="checkbox"
+                            onchange="toggleMusicControls()"
+                        >
+                        Background Music
+                    </label>
+
+                    <p>
+                        Musik akan di-loop otomatis.
+                        Volume turun ketika voice-over berbicara.
+                    </p>
+                </div>
+
+                <div class="music-upload-box">
+                    <input
+                        id="catalogMusicFiles"
+                        type="file"
+                        multiple
+                        accept="
+                            audio/mpeg,
+                            audio/wav,
+                            audio/x-wav,
+                            audio/mp4,
+                            audio/aac,
+                            audio/ogg,
+                            .mp3,
+                            .wav,
+                            .m4a,
+                            .aac,
+                            .ogg
+                        "
+                    >
+
+                    <button
+                        id="uploadCatalogMusicButton"
+                        type="button"
+                        class="mini-button"
+                        onclick="uploadCatalogMusic()"
+                    >
+                        Upload Musik
+                    </button>
+                </div>
+            </div>
+
+            <div
+                id="multiMusicControls"
+                class="multi-music-controls voiceover-disabled"
+            >
+                <div class="field">
+                    <label>Pilih Musik</label>
+
+                    <select
+                        id="multiCampaignMusicId"
+                        onchange="previewSelectedMusic()"
+                        disabled
+                    >
+                        <option value="">
+                            Memuat library musik...
+                        </option>
+                    </select>
+                </div>
+
+                <div class="field">
+                    <label>
+                        Volume:
+                        <span id="musicVolumeLabel">22%</span>
+                    </label>
+
+                    <input
+                        id="multiCampaignMusicVolume"
+                        type="range"
+                        min="5"
+                        max="100"
+                        step="1"
+                        value="22"
+                        oninput="updateMusicVolumeLabel()"
+                        disabled
+                    >
+                </div>
+
+                <label class="music-ducking-toggle">
+                    <input
+                        id="multiCampaignMusicDucking"
+                        type="checkbox"
+                        checked
+                        disabled
+                    >
+                    <span>
+                        Automatic ducking saat VO
+                    </span>
+                </label>
+
+                <audio
+                    id="catalogMusicPreview"
+                    class="catalog-music-preview"
+                    controls
+                    preload="metadata"
+                ></audio>
+            </div>
+
+            <div
+                id="catalogMusicLibrary"
+                class="catalog-music-library"
+            ></div>
+
+            <div
+                id="catalogMusicStatus"
+                class="raw-video-setting-status"
+            ></div>
+        </section>
+
+        <div class="multi-product-actions">
+            <button
+                id="generateMultiCampaignButton"
+                class="button primary"
+                type="button"
+            >
+                Generate Catalog Ads
+            </button>
+        </div>
+
+
+        <section class="automation-panel">
+            <div class="automation-panel-head">
+                <div>
+                    <span class="eyebrow">
+                        B10 AUTOMATION
+                    </span>
+
+                    <h3>
+                        Campaign Automation
+                    </h3>
+
+                    <p>
+                        Simpan konfigurasi katalog,
+                        jalankan manual atau terjadwal,
+                        dan kirim hasil ke webhook n8n.
+                    </p>
+                </div>
+            </div>
+
+            <div class="automation-controls">
+                <div class="field">
+                    <label>Nama Automation</label>
+
+                    <input
+                        id="automationName"
+                        placeholder="Contoh: Catalog Harian"
+                    >
+                </div>
+
+                <div class="field">
+                    <label>Jadwal</label>
+
+                    <select
+                        id="automationScheduleType"
+                        onchange="toggleAutomationScheduleFields()"
+                    >
+                        <option value="manual">
+                            Manual
+                        </option>
+
+                        <option value="once">
+                            Sekali
+                        </option>
+
+                        <option value="daily">
+                            Setiap Hari
+                        </option>
+
+                        <option value="weekly">
+                            Setiap Minggu
+                        </option>
+                    </select>
+                </div>
+
+                <div class="field">
+                    <label>Mulai Tanggal/Jam</label>
+
+                    <input
+                        id="automationRunAt"
+                        type="datetime-local"
+                        disabled
+                    >
+                </div>
+
+                <div class="field automation-webhook-field">
+                    <label>Webhook n8n</label>
+
+                    <input
+                        id="automationWebhookUrl"
+                        type="url"
+                        placeholder="https://n8n.domain/webhook/..."
+                    >
+                </div>
+            </div>
+
+            <div class="automation-create-actions">
+                <button
+                    type="button"
+                    class="button primary"
+                    onclick="createAutomationRule()"
+                >
+                    Simpan Automation
+                </button>
+
+                <button
+                    type="button"
+                    class="button secondary"
+                    onclick="loadAutomationRules()"
+                >
+                    Refresh
+                </button>
+            </div>
+
+            <div
+                id="automationMessage"
+                class="automation-message"
+            ></div>
+
+            <div
+                id="automationRuleList"
+                class="automation-rule-list"
+            >
+                Memuat automation...
+            </div>
+        </section>
+
+        <div
+            id="multiProductPicker"
+            class="multi-product-picker"
+        ></div>
+
+        <section
+            id="catalogPreflight"
+            class="catalog-preflight"
+        >
+            <div class="catalog-preflight-head">
+                <div>
+                    <strong>Preflight Catalog Video</strong>
+                    <span>
+                        Pilih 5–6 produk untuk melihat urutan,
+                        trim, dan estimasi durasi.
+                    </span>
+                </div>
+
+                <span
+                    id="catalogPreflightBadge"
+                    class="catalog-preflight-badge"
+                >
+                    Belum siap
+                </span>
+            </div>
+
+            <div
+                id="catalogPreflightSummary"
+                class="catalog-preflight-summary"
+            ></div>
+
+            <div
+                id="catalogPreflightItems"
+                class="catalog-preflight-items"
+            >
+                <div class="empty compact">
+                    Belum ada produk dipilih.
+                </div>
+            </div>
+        </section>
+
+        <div
+            id="multiCampaignMessage"
+            class="status"
+        ></div>
+
+        <div
+            id="multiCampaignList"
+            class="campaign-list"
+        ></div>
+    </section>
+
+    <div
+        id="globalStatus"
+        class="status"
+    ></div>
+
+    <section
+        id="productGrid"
+        class="product-grid"
+    ></section>
+</main>
+
+<div
+    id="workspaceModal"
+    class="modal hidden"
+>
+    <div
+        class="modal-backdrop"
+        onclick="closeWorkspace()"
+    ></div>
+
+    <section class="workspace">
+        <header class="workspace-header">
+            <div>
+                <span class="eyebrow">
+                    PRODUCT WORKSPACE
+                </span>
+
+                <h2 id="workspaceTitle">
+                    Loading...
+                </h2>
+
+                <p id="workspaceSubtitle"></p>
+            </div>
+
+            <button
+                class="icon-button"
+                onclick="closeWorkspace()"
+            >
+                ×
+            </button>
+        </header>
+
+        <div
+            id="workspaceStatus"
+            class="status"
+        ></div>
+
+        <div
+            id="workspaceContent"
+            class="workspace-content"
+        ></div>
+    </section>
+</div>
+
+<script src="/static/app.js?v=b10-auto-20260624-003433"></script>
+</body>
+</html>
