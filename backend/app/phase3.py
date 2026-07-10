@@ -20,7 +20,7 @@ from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageChops, ImageFilter, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, Field, field_validator
 from redis import Redis
 from rq import Queue, Retry
@@ -14338,6 +14338,73 @@ def normalize_content_image_canvas(
     return background
 
 
+def build_product_preserve_mask(raw_image: bytes) -> bytes:
+    try:
+        with Image.open(BytesIO(raw_image)) as image:
+            image = ImageOps.exif_transpose(image).convert("RGB")
+    except UnidentifiedImageError as error:
+        raise RuntimeError("Raw image tidak bisa dibaca") from error
+
+    width, height = image.size
+    small_width = 360
+    small_height = max(1, int(height * small_width / max(1, width)))
+    small = image.resize(
+        (small_width, small_height),
+        Image.Resampling.BILINEAR,
+    )
+    gray = ImageOps.grayscale(small)
+    edges = ImageFilter.FIND_EDGES.filter(gray)
+    edges = ImageOps.autocontrast(edges)
+    edge_mask = edges.point(lambda value: 255 if value > 22 else 0, mode="L")
+
+    hsv = small.convert("HSV")
+    saturation = hsv.getchannel("S")
+    value = hsv.getchannel("V")
+    saturation_mask = saturation.point(
+        lambda value: 255 if value > 32 else 0,
+        mode="L",
+    )
+    dark_mask = value.point(
+        lambda value: 255 if value < 185 else 0,
+        mode="L",
+    )
+
+    subject = ImageChops.lighter(edge_mask, saturation_mask)
+    subject = ImageChops.lighter(subject, dark_mask)
+
+    # The top rail/wall/background often creates strong edges. Favor the
+    # lower product display area so the mask preserves actual merchandise,
+    # not the entire scene.
+    product_zone = Image.new("L", small.size, 0)
+    zone_top = int(small_height * 0.28)
+    zone_bottom = int(small_height * 0.93)
+    zone_left = int(small_width * 0.04)
+    zone_right = int(small_width * 0.96)
+    product_zone.paste(
+        255,
+        (zone_left, zone_top, zone_right, zone_bottom),
+    )
+    subject = ImageChops.multiply(subject, product_zone)
+    subject = subject.filter(ImageFilter.MaxFilter(19))
+    subject = subject.filter(ImageFilter.GaussianBlur(5))
+    subject = subject.point(lambda value: 255 if value > 20 else 0, mode="L")
+    subject = subject.resize(
+        (width, height),
+        Image.Resampling.LANCZOS,
+    )
+    subject = subject.filter(ImageFilter.MaxFilter(31))
+    subject = subject.filter(ImageFilter.GaussianBlur(7))
+
+    # OpenAI edit masks use transparent pixels as editable areas. Keep the
+    # detected product area opaque so the model changes the scene, not the
+    # product pixels.
+    mask = Image.new("RGBA", (width, height), (255, 255, 255, 0))
+    mask.putalpha(subject)
+    output = BytesIO()
+    mask.save(output, format="PNG")
+    return output.getvalue()
+
+
 def save_content_image(
     image_bytes: bytes,
     *,
@@ -14398,9 +14465,24 @@ def generate_openai_content_images(
     prompt: str,
     size: str,
     count: int,
+    preserve_mask: bytes | None = None,
 ) -> list[bytes]:
     if not OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY belum dikonfigurasi")
+
+    files = {
+        "image": (
+            filename,
+            raw_image,
+            content_type or "image/png",
+        ),
+    }
+    if preserve_mask:
+        files["mask"] = (
+            "preserve-product-mask.png",
+            preserve_mask,
+            "image/png",
+        )
 
     response = httpx.post(
         f"{OPENAI_BASE_URL}/images/edits",
@@ -14413,13 +14495,7 @@ def generate_openai_content_images(
             "size": size,
             "n": str(count),
         },
-        files={
-            "image": (
-                filename,
-                raw_image,
-                content_type or "image/png",
-            ),
-        },
+        files=files,
         timeout=180,
     )
 
@@ -14502,6 +14578,7 @@ async def generate_content_images(
         aspect_ratio=aspect_ratio,
         custom_prompt=prompt or "",
     )
+    preserve_mask = build_product_preserve_mask(raw_bytes)
 
     try:
         generated_images = generate_openai_content_images(
@@ -14511,6 +14588,7 @@ async def generate_content_images(
             prompt=final_prompt,
             size=CONTENT_IMAGE_SIZES[aspect_ratio],
             count=count,
+            preserve_mask=preserve_mask,
         )
         safe_stem = re.sub(r"[^a-z0-9]+", "-", normalized_name.lower()).strip("-") or "content"
         images = [
