@@ -10523,6 +10523,138 @@ def render_raw_catalog_segment(
         )
 
 
+def render_raw_catalog_image_segment(
+    input_path: Path,
+    output_path: Path,
+    aspect_ratio: str,
+    duration: float,
+    fit_mode: str = "cover",
+) -> None:
+    width, height = dimensions(
+        aspect_ratio
+    )
+
+    duration = max(
+        0.75,
+        float(duration),
+    )
+
+    fit_mode = str(
+        fit_mode or "cover"
+    ).strip().lower()
+
+    if fit_mode not in {
+        "contain",
+        "cover",
+        "blur_fill",
+    }:
+        fit_mode = "cover"
+
+    fps = 30
+    frames = max(
+        1,
+        int(round(duration * fps)),
+    )
+
+    if fit_mode == "contain":
+        video_filter = (
+            f"scale={width}:{height}:"
+            "force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:"
+            "(ow-iw)/2:(oh-ih)/2:"
+            "color=0xFFF7EC,"
+            f"zoompan=z='min(zoom+0.0007,1.045)':"
+            "x='iw/2-(iw/zoom/2)':"
+            "y='ih/2-(ih/zoom/2)':"
+            f"d={frames}:s={width}x{height}:fps={fps},"
+            "setsar=1,format=yuv420p"
+        )
+    elif fit_mode == "blur_fill":
+        video_filter = (
+            "split=2[background][foreground];"
+            "[background]"
+            f"scale={width}:{height}:"
+            "force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},"
+            "boxblur=luma_radius=min(h\\,w)/30:"
+            "luma_power=2,"
+            "eq=brightness=-0.04:saturation=0.92"
+            "[blurred];"
+            "[foreground]"
+            f"scale={width}:{height}:"
+            "force_original_aspect_ratio=decrease"
+            "[main];"
+            "[blurred][main]"
+            "overlay=(main_w-overlay_w)/2:"
+            "(main_h-overlay_h)/2,"
+            f"zoompan=z='min(zoom+0.0008,1.050)':"
+            "x='iw/2-(iw/zoom/2)':"
+            "y='ih/2-(ih/zoom/2)':"
+            f"d={frames}:s={width}x{height}:fps={fps},"
+            "setsar=1,format=yuv420p"
+        )
+    else:
+        video_filter = (
+            f"scale={width}:{height}:"
+            "force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},"
+            f"zoompan=z='min(zoom+0.0010,1.060)':"
+            "x='iw/2-(iw/zoom/2)':"
+            "y='ih/2-(ih/zoom/2)':"
+            f"d={frames}:s={width}x{height}:fps={fps},"
+            "setsar=1,format=yuv420p"
+        )
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-loop",
+        "1",
+        "-framerate",
+        str(fps),
+        "-t",
+        f"{duration:.3f}",
+        "-i",
+        str(input_path),
+        "-vf",
+        video_filter,
+        "-an",
+        "-t",
+        f"{duration:.3f}",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "21",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=1200,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            result.stderr[-4000:]
+        )
+
+    if (
+        not output_path.is_file()
+        or output_path.stat().st_size < 10_000
+    ):
+        raise RuntimeError(
+            "Segment image catalog tidak valid"
+        )
+
+
 
 def raw_catalog_safe_area(
     aspect_ratio: str,
@@ -11930,26 +12062,44 @@ def render_raw_catalog_video(
             / f"raw-catalog-{index + 1:03d}.mp4"
         )
 
-        render_raw_catalog_segment(
-            input_path=input_path,
-            output_path=segment,
-            aspect_ratio=config["aspect_ratio"],
-            duration=segment_duration,
-            trim_start=float(
-                clip.get("trim_start")
-                or 0.0
-            ),
-            trim_end=(
-                float(clip["trim_end"])
-                if clip.get("trim_end")
-                is not None
-                else None
-            ),
-            fit_mode=str(
-                clip.get("fit_mode")
-                or "contain"
-            ),
-        )
+        clip_asset_type = str(
+            clip.get("asset_type")
+            or clip.get("media_type")
+            or "video"
+        ).strip().lower()
+
+        if clip_asset_type == "image":
+            render_raw_catalog_image_segment(
+                input_path=input_path,
+                output_path=segment,
+                aspect_ratio=config["aspect_ratio"],
+                duration=segment_duration,
+                fit_mode=str(
+                    clip.get("fit_mode")
+                    or "cover"
+                ),
+            )
+        else:
+            render_raw_catalog_segment(
+                input_path=input_path,
+                output_path=segment,
+                aspect_ratio=config["aspect_ratio"],
+                duration=segment_duration,
+                trim_start=float(
+                    clip.get("trim_start")
+                    or 0.0
+                ),
+                trim_end=(
+                    float(clip["trim_end"])
+                    if clip.get("trim_end")
+                    is not None
+                    else None
+                ),
+                fit_mode=str(
+                    clip.get("fit_mode")
+                    or "contain"
+                ),
+            )
 
         segments.append(segment)
 
@@ -14746,6 +14896,8 @@ def product_raw_videos(
             {
                 "clip_id": f"asset-{asset.id}",
                 "asset_id": asset.id,
+                "asset_type": "video",
+                "media_type": "video",
                 "product_id": asset.product_id,
                 "label": asset.original_name,
                 "title": asset.original_name,
@@ -14805,11 +14957,71 @@ def product_raw_videos(
             }
         )
 
+    image_assets = list(
+        db.scalars(
+            select(ProductAsset)
+            .where(
+                ProductAsset.product_id == product_id,
+                ProductAsset.asset_type == "image",
+            )
+            .order_by(
+                ProductAsset.created_at.desc(),
+                ProductAsset.id.desc(),
+            )
+        ).all()
+    )
+
+    for asset in image_assets:
+        absolute_path = (
+            STORAGE_ROOT
+            / asset.relative_path
+        )
+
+        if (
+            not absolute_path.is_file()
+            or absolute_path.stat().st_size < 100
+        ):
+            continue
+
+        raw_videos.append(
+            {
+                "clip_id": f"asset-{asset.id}",
+                "asset_id": asset.id,
+                "asset_type": "image",
+                "media_type": "image",
+                "product_id": asset.product_id,
+                "label": asset.original_name,
+                "title": asset.original_name,
+                "archive": asset.relative_path,
+                "url": f"/media/{asset.relative_path}",
+                "mime_type": asset.mime_type,
+                "size_bytes": asset.size_bytes,
+                "source": asset.source,
+                "video_type": "lifestyle",
+                "fit_mode": "cover",
+                "is_primary": False,
+                "trim_start": 0.0,
+                "trim_end": None,
+                "duration_seconds": None,
+                "width": None,
+                "height": None,
+                "fps": 30,
+                "orientation": None,
+                "has_audio": False,
+                "created_at": (
+                    asset.created_at.isoformat()
+                    if asset.created_at
+                    else None
+                ),
+            }
+        )
+
     raw_videos.sort(
         key=lambda item: (
             not bool(
                 item.get("is_primary")
             ),
+            0 if item.get("media_type") == "image" else 1,
             item.get("created_at") or "",
         )
     )
@@ -15801,17 +16013,58 @@ def create_raw_video_catalog_campaign(
                 asset is not None
                 and asset.product_id
                     == selection.product_id
-                and asset.asset_type == "video"
+                and asset.asset_type in {
+                    "video",
+                    "image",
+                }
             ):
-                absolute_video_path = (
+                absolute_media_path = (
                     STORAGE_ROOT
                     / asset.relative_path
                 )
 
-                if absolute_video_path.is_file():
+                if (
+                    absolute_media_path.is_file()
+                    and asset.asset_type == "image"
+                ):
+                    clip = {
+                        "clip_id": clip_id,
+                        "asset_id": asset.id,
+                        "asset_type": "image",
+                        "media_type": "image",
+                        "archive": asset.relative_path,
+                        "label": asset.original_name,
+                        "source": (
+                            asset.source or "uploaded"
+                        ),
+                        "mime_type": asset.mime_type,
+                        "trim_start": 0.0,
+                        "trim_end": None,
+                        "video_type": "lifestyle",
+                        "fit_mode": (
+                            selection.fit_mode
+                            if selection.fit_mode
+                            in {
+                                "contain",
+                                "cover",
+                                "blur_fill",
+                            }
+                            else "cover"
+                        ),
+                        "requested_fit_mode": (
+                            selection.fit_mode
+                            or "cover"
+                        ),
+                        "source_orientation": None,
+                        "source_width": None,
+                        "source_height": None,
+                        "source_duration_seconds": None,
+                    }
+
+                elif absolute_media_path.is_file():
                     source_metadata = (
                         probe_uploaded_raw_video(
-                            absolute_video_path
+                            absolute_media_path
                         )
                     )
 
@@ -15839,6 +16092,8 @@ def create_raw_video_catalog_campaign(
                     clip = {
                         "clip_id": clip_id,
                         "asset_id": asset.id,
+                        "asset_type": "video",
+                        "media_type": "video",
                         "archive": asset.relative_path,
                         "label": asset.original_name,
                         "source": "uploaded",
@@ -15886,7 +16141,7 @@ def create_raw_video_catalog_campaign(
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "Raw video tidak ditemukan untuk "
+                    "Asset kreatif tidak ditemukan untuk "
                     f"{product.name}"
                 ),
             )

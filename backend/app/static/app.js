@@ -2244,6 +2244,16 @@ function setRawVideoGenerateState(productId, text, isBusy = false) {
 
 
 function rawVideoLabel(video) {
+    const mediaType =
+        video.media_type
+        || video.asset_type
+        || "video";
+
+    const mediaLabel =
+        mediaType === "image"
+            ? "Image"
+            : "Video";
+
     const title =
         video.title
         || video.label
@@ -2270,7 +2280,7 @@ function rawVideoLabel(video) {
         : "";
 
     return (
-        `${primaryLabel}${title}`
+        `${primaryLabel}${mediaLabel} - ${title}`
         + `${typeLabel}${fitLabel}${sizeMb}`
     );
 }
@@ -2295,16 +2305,16 @@ async function populateRawVideoSelect(productId, preferredClipId = "") {
     if (!select) return;
 
     select.disabled = true;
-    select.innerHTML = '<option value="">Memuat raw video...</option>';
+    select.innerHTML = '<option value="">Memuat asset...</option>';
 
     try {
         const rawVideos = await loadRawVideosForProduct(productId);
 
         if (!rawVideos.length) {
-            select.innerHTML = '<option value="">Belum ada raw video real</option>';
+            select.innerHTML = '<option value="">Belum ada video/image</option>';
             setRawVideoGenerateState(
                 productId,
-                "Belum ada raw video real. Upload video dari workspace produk."
+                "Belum ada video/image. Upload raw video atau buat image variation dari workspace produk."
             );
             return;
         }
@@ -2344,8 +2354,8 @@ function updateRawVideoSelectionStatus(productId) {
         setRawVideoGenerateState(
             productId,
             videos.length
-                ? `${videos.length} video tersedia, pilih salah satu`
-                : "Belum ada raw video real"
+                ? `${videos.length} asset tersedia, pilih salah satu`
+                : "Belum ada video/image"
         );
         return;
     }
@@ -2670,7 +2680,7 @@ function calculateCatalogPreflight() {
 
             if (!video) {
                 errors.push(
-                    `${productName}: raw video belum dipilih.`
+                    `${productName}: asset belum dipilih.`
                 );
 
                 return {
@@ -2679,7 +2689,27 @@ function calculateCatalogPreflight() {
                     index,
                     valid: false,
                     message:
-                        "Raw video belum dipilih",
+                        "Asset belum dipilih",
+                };
+            }
+
+            const mediaType =
+                video.media_type
+                || video.asset_type
+                || "video";
+
+            if (mediaType === "image") {
+                return {
+                    productId,
+                    productName,
+                    index,
+                    valid: true,
+                    message:
+                        "Image motion siap",
+                    video,
+                    segmentDuration,
+                    effectiveDuration:
+                        segmentDuration,
                 };
             }
 
