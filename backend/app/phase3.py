@@ -13,12 +13,14 @@ import textwrap
 import time
 import uuid
 import zipfile
+from io import BytesIO
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, Field, field_validator
 from redis import Redis
 from rq import Queue, Retry
@@ -80,6 +82,10 @@ OPENAI_BASE_URL = os.getenv(
 OPENAI_COPY_MODEL = os.getenv(
     "OPENAI_COPY_MODEL",
     "gpt-5.4-mini",
+).strip()
+OPENAI_IMAGE_MODEL = os.getenv(
+    "OPENAI_IMAGE_MODEL",
+    "gpt-image-1",
 ).strip()
 # B18C_OPENAI_CONSTANTS_END
 
@@ -14202,6 +14208,267 @@ def generate_ai_hook_cta(
         **result,
     }
 # B18C_OPENAI_COPY_BACKEND_END
+
+
+CONTENT_IMAGE_SCENES = {
+    "cute_desk": "cute pastel desk setup with soft morning light, clean stationery, playful collectible mood",
+    "toy_shelf": "warm toy shelf display, cute collectible background, soft bokeh, premium toy store feel",
+    "gift_table": "gift wrapping table, ribbons, small cards, warm lighting, perfect for birthday or event gift",
+    "office_desk": "modern office desk, laptop corner, tidy productivity setup, premium but friendly",
+    "kids_activity": "bright kids activity table, safe craft-play mood, cheerful colors, family friendly",
+    "cafe_table": "cozy cafe table, warm drink nearby, natural window light, lifestyle product photography",
+    "flatlay": "clean commercial flatlay, colorful accents, balanced negative space, social media ready",
+    "macro_detail": "macro detail scene, shallow depth of field, product texture and finishing highlighted",
+    "premium_black": "premium dark display scene, controlled studio light, glossy highlights, elegant contrast",
+    "bright_studio": "bright clean studio, colorful backdrop, soft shadows, catalog-ready commercial lighting",
+    "nature_moss": "miniature nature scene with moss, stones, soft flowers, whimsical collectible mood",
+    "event_bundle": "event souvenir table, several gifts arranged neatly, celebration and bulk order feel",
+}
+
+CONTENT_IMAGE_PRODUCT_TYPES = {
+    "keychain": "keychain accessory",
+    "keychain_clicker": "keychain clicker fidget toy with mechanical click function",
+    "magnet": "fridge magnet or decorative magnetic attachment",
+}
+
+CONTENT_IMAGE_SIZES = {
+    "1:1": "1024x1024",
+    "4:5": "1024x1536",
+    "9:16": "1024x1536",
+    "16:9": "1536x1024",
+}
+
+
+def content_image_root() -> Path:
+    root = STORAGE_ROOT / "content-images"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def content_image_prompt(
+    *,
+    product_name: str,
+    product_type: str,
+    scene: str,
+    aspect_ratio: str,
+    custom_prompt: str,
+) -> str:
+    type_description = CONTENT_IMAGE_PRODUCT_TYPES.get(
+        product_type,
+        "small 3D printed product accessory",
+    )
+    scene_description = CONTENT_IMAGE_SCENES.get(scene, scene)
+
+    prompt = f"""
+Use the uploaded raw image as the main product reference for {product_name}.
+Create a polished commercial product content image for SpaceCraft.
+Product type: {type_description}.
+Scene direction: {scene_description}.
+Aspect ratio target: {aspect_ratio}.
+
+Keep the product identity, shape, color, material, proportions, and functional
+details accurate. Do not turn it into a different product. Do not add extra
+products that are not implied by the reference image. Keep the product sharp,
+clear, and attractive.
+
+Improve the scene, background, lighting, surface, shadows, composition, and
+premium advertising feel. Make it bright, modern, cute, collectible, clean,
+and ready for Instagram, TikTok, WhatsApp, and Meta Ads content.
+
+Do not add text, logo, watermark, typo, price, QR code, or UI elements.
+"""
+
+    if custom_prompt.strip():
+        prompt += "\nExtra direction from user:\n" + custom_prompt.strip()
+
+    return " ".join(prompt.split())
+
+
+def save_content_image(
+    image_bytes: bytes,
+    *,
+    stem: str,
+) -> dict[str, Any]:
+    try:
+        with Image.open(BytesIO(image_bytes)) as image:
+            image = ImageOps.exif_transpose(image)
+            image.thumbnail((1800, 1800), Image.Resampling.LANCZOS)
+
+            has_alpha = image.mode in {"RGBA", "LA"} or (
+                image.mode == "P"
+                and "transparency" in image.info
+            )
+            output_image = image.convert("RGBA" if has_alpha else "RGB")
+
+            output = BytesIO()
+            output_image.save(
+                output,
+                format="WEBP",
+                quality=90,
+                method=6,
+            )
+            final_bytes = output.getvalue()
+    except UnidentifiedImageError as error:
+        raise RuntimeError("Generated image tidak bisa dibaca") from error
+
+    filename = f"{stem}-{uuid.uuid4().hex}.webp"
+    absolute_path = content_image_root() / filename
+    absolute_path.write_bytes(final_bytes)
+    archive = absolute_path.relative_to(STORAGE_ROOT).as_posix()
+
+    return {
+        "filename": filename,
+        "url": f"/media/{archive}",
+        "mime_type": "image/webp",
+        "size_bytes": len(final_bytes),
+        "size_label": (
+            f"{len(final_bytes) / 1024:.1f} KB"
+            if len(final_bytes) < 1024 * 1024
+            else f"{len(final_bytes) / 1024 / 1024:.1f} MB"
+        ),
+    }
+
+
+def generate_openai_content_images(
+    *,
+    raw_image: bytes,
+    filename: str,
+    content_type: str,
+    prompt: str,
+    size: str,
+    count: int,
+) -> list[bytes]:
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY belum dikonfigurasi")
+
+    response = httpx.post(
+        f"{OPENAI_BASE_URL}/images/edits",
+        headers={
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+        },
+        data={
+            "model": OPENAI_IMAGE_MODEL,
+            "prompt": prompt,
+            "size": size,
+            "n": str(count),
+        },
+        files={
+            "image": (
+                filename,
+                raw_image,
+                content_type or "image/png",
+            ),
+        },
+        timeout=180,
+    )
+
+    if response.status_code >= 400:
+        detail = ""
+        try:
+            body = response.json()
+            detail = str(
+                (body.get("error") or {}).get("message")
+                or body.get("detail")
+                or ""
+            )
+        except Exception:
+            detail = response.text[:500]
+        raise RuntimeError(
+            f"OpenAI image HTTP {response.status_code}: "
+            f"{detail or 'request gagal'}"
+        )
+
+    payload = response.json()
+    outputs: list[bytes] = []
+    for item in payload.get("data") or []:
+        if item.get("b64_json"):
+            outputs.append(base64.b64decode(item["b64_json"]))
+        elif item.get("url"):
+            image_response = httpx.get(item["url"], timeout=90)
+            image_response.raise_for_status()
+            outputs.append(image_response.content)
+
+    if not outputs:
+        raise RuntimeError("OpenAI tidak mengembalikan image")
+
+    return outputs
+
+
+@router.post("/api/content-images/generate")
+async def generate_content_images(
+    product_name: str = Form(...),
+    product_type: str = Form("keychain_clicker"),
+    scene: str = Form("toy_shelf"),
+    aspect_ratio: str = Form("4:5"),
+    prompt: str = Form(""),
+    count: int = Form(1),
+    raw_image: UploadFile = File(...),
+):
+    normalized_name = re.sub(r"\s+", " ", product_name or "").strip()
+    if not normalized_name:
+        raise HTTPException(status_code=400, detail="Nama produk wajib diisi")
+
+    if product_type not in CONTENT_IMAGE_PRODUCT_TYPES:
+        raise HTTPException(status_code=400, detail="Tipe produk tidak valid")
+
+    if aspect_ratio not in CONTENT_IMAGE_SIZES:
+        raise HTTPException(status_code=400, detail="Rasio tidak valid")
+
+    count = max(1, min(4, int(count or 1)))
+    original_name = Path(raw_image.filename or "raw-image.png").name
+    extension = Path(original_name).suffix.lower()
+    if extension not in {".jpg", ".jpeg", ".png", ".webp"}:
+        raise HTTPException(
+            status_code=415,
+            detail="Raw image harus JPG, PNG, atau WEBP",
+        )
+
+    content_type = str(raw_image.content_type or "").lower()
+    if content_type and not content_type.startswith("image/"):
+        raise HTTPException(status_code=415, detail="Raw image harus berupa image")
+
+    raw_bytes = await raw_image.read()
+    await raw_image.close()
+    if not raw_bytes or len(raw_bytes) < 100:
+        raise HTTPException(status_code=400, detail="Raw image kosong")
+    if len(raw_bytes) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Raw image maksimal 20 MB")
+
+    final_prompt = content_image_prompt(
+        product_name=normalized_name,
+        product_type=product_type,
+        scene=scene,
+        aspect_ratio=aspect_ratio,
+        custom_prompt=prompt or "",
+    )
+
+    try:
+        generated_images = generate_openai_content_images(
+            raw_image=raw_bytes,
+            filename=original_name,
+            content_type=content_type or "image/png",
+            prompt=final_prompt,
+            size=CONTENT_IMAGE_SIZES[aspect_ratio],
+            count=count,
+        )
+        safe_stem = re.sub(r"[^a-z0-9]+", "-", normalized_name.lower()).strip("-") or "content"
+        images = [
+            save_content_image(image_bytes, stem=safe_stem)
+            for image_bytes in generated_images
+        ]
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail=str(error)[-1200:],
+        ) from error
+
+    return {
+        "ok": True,
+        "provider": "openai",
+        "model": OPENAI_IMAGE_MODEL,
+        "prompt": final_prompt,
+        "images": images,
+    }
 
 
 @router.get("/api/voiceover/status")

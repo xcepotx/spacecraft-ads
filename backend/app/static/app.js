@@ -55,6 +55,9 @@ const multiProductMenuButton =
 const productLibraryMenuButton =
     document.getElementById("productLibraryMenuButton");
 
+const contentImageMenuButton =
+    document.getElementById("contentImageMenuButton");
+
 const backToStudioButton =
     document.getElementById("backToStudioButton");
 
@@ -69,6 +72,21 @@ const productToolbar =
 
 const multiProductSection =
     document.getElementById("multiProductSection");
+
+const contentImageSection =
+    document.getElementById("contentImageSection");
+
+const contentImageForm =
+    document.getElementById("contentImageForm");
+
+const contentImageGenerateButton =
+    document.getElementById("contentImageGenerateButton");
+
+const contentImageStatus =
+    document.getElementById("contentImageStatus");
+
+const contentImageResults =
+    document.getElementById("contentImageResults");
 
 const multiProductPicker =
     document.getElementById("multiProductPicker");
@@ -1834,22 +1852,37 @@ function toggleCatalogProductFilter(input) {
 }
 
 
-function isProductLibraryPage() {
+function currentPage() {
     return new URLSearchParams(
         window.location.search
-    ).get("page") === "products";
+    ).get("page") || "studio";
+}
+
+
+function isProductLibraryPage() {
+    return currentPage() === "products";
+}
+
+
+function isContentImagePage() {
+    return currentPage() === "content-images";
 }
 
 
 function applyPageLayout() {
     const productPage = isProductLibraryPage();
+    const contentPage = isContentImagePage();
 
     if (studioHeroSection) {
-        studioHeroSection.hidden = productPage;
+        studioHeroSection.hidden = productPage || contentPage;
     }
 
     if (multiProductSection) {
-        multiProductSection.hidden = productPage;
+        multiProductSection.hidden = productPage || contentPage;
+    }
+
+    if (contentImageSection) {
+        contentImageSection.hidden = !contentPage;
     }
 
     if (productLibraryHeader) {
@@ -1865,10 +1898,20 @@ function applyPageLayout() {
     }
 
     if (multiProductMenuButton) {
-        multiProductMenuButton.textContent = productPage
+        multiProductMenuButton.textContent = productPage || contentPage
             ? "Studio Generator"
             : "Multi Produk";
     }
+
+    productLibraryMenuButton?.classList.toggle(
+        "is-active",
+        productPage
+    );
+
+    contentImageMenuButton?.classList.toggle(
+        "is-active",
+        contentPage
+    );
 }
 
 
@@ -1890,6 +1933,18 @@ function openStudioPage() {
     );
     target.searchParams.delete(
         "page"
+    );
+    window.location.href = target.toString();
+}
+
+
+function openContentImagePage() {
+    const target = new URL(
+        window.location.href
+    );
+    target.searchParams.set(
+        "page",
+        "content-images"
     );
     window.location.href = target.toString();
 }
@@ -5180,6 +5235,139 @@ async function deleteAsset(assetId) {
 }
 
 
+function renderContentImageCard(image) {
+    const url = escapeHtml(image.url || "");
+    const filename = escapeHtml(
+        image.filename || "content-image.webp"
+    );
+    const sizeLabel = escapeHtml(image.size_label || "");
+
+    return `
+        <article class="content-image-card">
+            <img src="${url}" alt="${filename}" loading="lazy">
+            <div class="content-image-card-body">
+                <strong>${filename}</strong>
+                <span>${sizeLabel}</span>
+                <div class="content-image-actions">
+                    <a class="button secondary" href="${url}" target="_blank" rel="noreferrer">
+                        Buka
+                    </a>
+                    <a class="button primary" href="${url}" download="${filename}">
+                        Download
+                    </a>
+                </div>
+            </div>
+        </article>
+    `;
+}
+
+
+async function generateContentImage(event) {
+    event.preventDefault();
+
+    const productNameInput =
+        document.getElementById("contentImageProductName");
+    const productTypeInput =
+        document.getElementById("contentImageProductType");
+    const sceneInput =
+        document.getElementById("contentImageScene");
+    const ratioInput =
+        document.getElementById("contentImageRatio");
+    const countInput =
+        document.getElementById("contentImageCount");
+    const promptInput =
+        document.getElementById("contentImagePrompt");
+    const fileInput =
+        document.getElementById("contentImageFile");
+
+    const productName =
+        String(productNameInput?.value || "").trim();
+    const file = fileInput?.files?.[0];
+
+    if (!productName) {
+        contentImageStatus.textContent =
+            "Isi nama produk dulu ya.";
+        return;
+    }
+
+    if (!file) {
+        contentImageStatus.textContent =
+            "Upload raw image produk dulu.";
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append("product_name", productName);
+    formData.append(
+        "product_type",
+        productTypeInput?.value || "keychain_clicker"
+    );
+    formData.append(
+        "scene",
+        sceneInput?.value || "toy_shelf"
+    );
+    formData.append(
+        "aspect_ratio",
+        ratioInput?.value || "4:5"
+    );
+    formData.append(
+        "count",
+        countInput?.value || "1"
+    );
+    formData.append(
+        "prompt",
+        promptInput?.value || ""
+    );
+    formData.append(
+        "raw_image",
+        file
+    );
+
+    contentImageGenerateButton.disabled = true;
+    contentImageGenerateButton.textContent =
+        "Generating...";
+    contentImageStatus.textContent =
+        "Membuat image content dari raw image...";
+
+    try {
+        const data = await api(
+            "/api/content-images/generate",
+            {
+                method: "POST",
+                body: formData,
+            }
+        );
+
+        const images = data.images || [];
+        contentImageResults.innerHTML = images.length
+            ? `
+                <div class="content-image-result-heading">
+                    <div>
+                        <strong>${images.length} image selesai dibuat</strong>
+                        <span>${escapeHtml(data.model || "")}</span>
+                    </div>
+                </div>
+                <div class="content-image-grid">
+                    ${images.map(renderContentImageCard).join("")}
+                </div>
+            `
+            : `<div class="empty">Belum ada image yang dibuat.</div>`;
+
+        contentImageStatus.textContent =
+            `Selesai. Output sudah dikompres ke WebP dan siap dipakai.`;
+
+    } catch (error) {
+        contentImageStatus.textContent =
+            `Generate image gagal: ${error.message}`;
+
+    } finally {
+        contentImageGenerateButton.disabled = false;
+        contentImageGenerateButton.textContent =
+            "Generate Content Image";
+    }
+}
+
+
 searchButton.addEventListener(
     "click",
     loadProducts
@@ -5226,9 +5414,19 @@ productLibraryMenuButton?.addEventListener(
     openProductLibraryPage
 );
 
+contentImageMenuButton?.addEventListener(
+    "click",
+    openContentImagePage
+);
+
 backToStudioButton?.addEventListener(
     "click",
     openStudioPage
+);
+
+contentImageForm?.addEventListener(
+    "submit",
+    generateContentImage
 );
 
 generateMultiCampaignButton?.addEventListener(

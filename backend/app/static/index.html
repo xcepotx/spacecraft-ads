@@ -53,6 +53,14 @@
         </button>
 
         <button
+            id="contentImageMenuButton"
+            class="button secondary"
+            type="button"
+        >
+            Image Studio
+        </button>
+
+        <button
             id="syncButton"
             class="button primary"
         >
@@ -138,6 +146,152 @@
         >
             Cari
         </button>
+    </section>
+
+    <section
+        id="contentImageSection"
+        class="content-image-studio"
+        hidden
+    >
+        <div class="content-image-hero">
+            <span class="eyebrow">AI IMAGE CONTENT</span>
+            <h2>Buat visual produk dari raw image</h2>
+            <p>
+                Upload foto produk, pilih scene, rasio, dan tipe produk.
+                Hasilnya dibuat sebagai image konten siap pakai untuk iklan,
+                feed, story, atau materi promosi.
+            </p>
+        </div>
+
+        <div class="content-image-layout">
+            <form
+                id="contentImageForm"
+                class="content-image-form panel"
+            >
+                <label class="field">
+                    <span>Nama produk</span>
+                    <input
+                        id="contentImageProductName"
+                        class="input"
+                        placeholder="Contoh: Panda Keychain"
+                        required
+                    >
+                </label>
+
+                <label class="field">
+                    <span>Tipe produk</span>
+                    <select
+                        id="contentImageProductType"
+                        class="input"
+                    >
+                        <option value="keychain">Keychain</option>
+                        <option value="keychain_clicker" selected>Keychain Clicker</option>
+                        <option value="magnet">Tempelan Kulkas / Magnet</option>
+                    </select>
+                </label>
+
+                <label class="field">
+                    <span>Scene</span>
+                    <select
+                        id="contentImageScene"
+                        class="input"
+                    >
+                        <option value="toy_shelf">Cute toy shelf</option>
+                        <option value="cute_desk">Pastel desk setup</option>
+                        <option value="gift_table">Gift wrapping table</option>
+                        <option value="office_desk">Office desk lifestyle</option>
+                        <option value="kids_activity">Kids activity table</option>
+                        <option value="cafe_table">Cozy cafe table</option>
+                        <option value="flatlay">Clean colorful flatlay</option>
+                        <option value="macro_detail">Macro detail close-up</option>
+                        <option value="premium_black">Premium dark studio</option>
+                        <option value="bright_studio">Bright commercial studio</option>
+                        <option value="nature_moss">Mini nature moss scene</option>
+                        <option value="event_bundle">Gift/event bundle scene</option>
+                    </select>
+                </label>
+
+                <div class="content-image-two">
+                    <label class="field">
+                        <span>Rasio</span>
+                        <select
+                            id="contentImageRatio"
+                            class="input"
+                        >
+                            <option value="4:5" selected>4:5 Feed</option>
+                            <option value="9:16">9:16 Story/Reels</option>
+                            <option value="1:1">1:1 Square</option>
+                            <option value="16:9">16:9 Landscape</option>
+                        </select>
+                    </label>
+
+                    <label class="field">
+                        <span>Jumlah variasi</span>
+                        <select
+                            id="contentImageCount"
+                            class="input"
+                        >
+                            <option value="1" selected>1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                        </select>
+                    </label>
+                </div>
+
+                <label class="field">
+                    <span>Prompt tambahan</span>
+                    <textarea
+                        id="contentImagePrompt"
+                        class="input"
+                        rows="5"
+                        placeholder="Contoh: buat warna background lebih cerah, cocok untuk hadiah ulang tahun anak, produk tetap sama persis"
+                    ></textarea>
+                </label>
+
+                <label class="field">
+                    <span>Raw image produk</span>
+                    <input
+                        id="contentImageFile"
+                        class="input"
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        required
+                    >
+                </label>
+
+                <button
+                    id="contentImageGenerateButton"
+                    class="button primary"
+                    type="submit"
+                >
+                    Generate Image Content
+                </button>
+
+                <div
+                    id="contentImageStatus"
+                    class="status"
+                ></div>
+            </form>
+
+            <section class="content-image-results panel">
+                <div class="content-image-results-head">
+                    <span class="eyebrow">HASIL</span>
+                    <p>
+                        Hasil tersimpan otomatis sebagai WebP ringan di server.
+                    </p>
+                </div>
+
+                <div
+                    id="contentImageResults"
+                    class="content-image-grid"
+                >
+                    <div class="empty">
+                        Belum ada hasil generate.
+                    </div>
+                </div>
+            </section>
+        </div>
     </section>
 
     <section
@@ -1494,7 +1648,7 @@
     </section>
 </div>
 
-<script src="/static/app.js?v=image-video-asset-upload-20260710"></script>
+<script src="/static/app.js?v=content-image-studio-20260710"></script>
 <script src="/static/b18b-campaign-history-v3.js?v=b18f-20260705-pageable-history"></script>
 <script src="/static/b18a-voice-draft-persistence.js?v=b18f-20260625-104619"></script>
 <script src="/static/b18c-unified-copy.js?v=20260625-093445"></script>
