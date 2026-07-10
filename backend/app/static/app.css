@@ -7819,6 +7819,11 @@ canvas,
     }
 }
 
+/* Keep route-switched sections truly hidden even when older responsive rules use !important display values. */
+[hidden] {
+    display: none !important;
+}
+
 @media (max-width: 420px) {
     .topbar-actions {
         grid-template-columns: 1fr 1fr !important;
