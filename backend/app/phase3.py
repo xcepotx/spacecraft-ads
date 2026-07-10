@@ -2572,6 +2572,7 @@ def b19a_sync_catalog_cache(
 
     seen_codes: set[str] = set()
     synced: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
 
     for summary in raw_catalogs:
         if not isinstance(summary, dict):
@@ -2586,11 +2587,30 @@ def b19a_sync_catalog_cache(
         if not code:
             continue
 
-        detail_payload = (
-            b19a_spacecraft_json(
-                f"/api/wabot/catalogs/{code}"
+        try:
+            detail_payload = (
+                b19a_spacecraft_json(
+                    f"/api/wabot/catalogs/{code}"
+                )
             )
-        )
+        except HTTPException as exc:
+            detail = str(
+                exc.detail
+                or ""
+            )
+
+            if (
+                exc.status_code == 502
+                and "HTTP 404" in detail
+            ):
+                seen_codes.add(code)
+                skipped.append({
+                    "catalog_code": code,
+                    "reason": "detail_endpoint_404",
+                })
+                continue
+
+            raise
 
         catalog_payload = (
             detail_payload.get("catalog")
@@ -2978,6 +2998,7 @@ def b19a_sync_catalog_cache(
         "drift": drift,
         "count": len(synced),
         "catalogs": synced,
+        "skipped_catalogs": skipped,
         "hidden_catalog_codes":
             hidden_codes,
         "source_synced_at":
@@ -3491,7 +3512,7 @@ def b19b_product_readiness(
 ) -> dict[str, Any]:
     result = product_raw_videos(
         product_id,
-        db,
+        db=db,
     )
 
     raw_videos = (
