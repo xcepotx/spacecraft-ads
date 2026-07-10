@@ -20,7 +20,7 @@ from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, Field, field_validator
 from redis import Redis
 from rq import Queue, Retry
@@ -14238,6 +14238,13 @@ CONTENT_IMAGE_SIZES = {
     "16:9": "1536x1024",
 }
 
+CONTENT_IMAGE_FINAL_SIZES = {
+    "1:1": (1080, 1080),
+    "4:5": (1080, 1350),
+    "9:16": (1080, 1920),
+    "16:9": (1920, 1080),
+}
+
 
 def content_image_root() -> Path:
     root = STORAGE_ROOT / "content-images"
@@ -14260,22 +14267,29 @@ def content_image_prompt(
     scene_description = CONTENT_IMAGE_SCENES.get(scene, scene)
 
     prompt = f"""
-Use the uploaded raw image as the main product reference for {product_name}.
-Create a polished commercial product content image for SpaceCraft.
+Use the uploaded image as the exact product reference for {product_name}.
+Create a premium product advertisement image for SpaceCraft.
 Product type: {type_description}.
 Scene direction: {scene_description}.
 Aspect ratio target: {aspect_ratio}.
 
-Keep the product identity, shape, color, material, proportions, and functional
-details accurate. Do not turn it into a different product. Do not add extra
-products that are not implied by the reference image. Keep the product sharp,
-clear, and attractive.
+Product lock rule: preserve the exact product identity, shape, colors, facial
+details, proportions, arrangement, material texture, and functional parts from
+the uploaded image. The product itself must not be redesigned, replaced,
+duplicated, deformed, simplified, recolored, or turned into a different object.
+Only improve the scene, surface, lighting, shadows, camera angle, depth of
+field, and commercial atmosphere around the product.
 
-Improve the scene, background, lighting, surface, shadows, composition, and
-premium advertising feel. Make it bright, modern, cute, collectible, clean,
-and ready for Instagram, TikTok, WhatsApp, and Meta Ads content.
+Keep the same number of products visible as the uploaded reference unless the
+user explicitly asks otherwise. Do not add extra products, extra characters,
+extra hands, extra fingers, logos, stickers, badges, QR codes, price labels,
+watermarks, UI elements, or crowded typography. Do not add any text unless the
+user explicitly asks for specific text in the extra direction. If text is
+requested, use only the exact requested text and keep it clean, readable, and
+limited.
 
-Do not add text, logo, watermark, typo, price, QR code, or UI elements.
+Make the final image bright, premium, cute, playful, modern, clean, high detail,
+photorealistic, and ready for Instagram Reels, TikTok, WhatsApp, and Meta Ads.
 """
 
     if custom_prompt.strip():
@@ -14284,15 +14298,59 @@ Do not add text, logo, watermark, typo, price, QR code, or UI elements.
     return " ".join(prompt.split())
 
 
+def normalize_content_image_canvas(
+    image: Image.Image,
+    *,
+    aspect_ratio: str,
+) -> Image.Image:
+    target_size = CONTENT_IMAGE_FINAL_SIZES.get(
+        aspect_ratio,
+        (1080, 1350),
+    )
+    target_width, target_height = target_size
+    source = image.convert("RGB")
+
+    background = ImageOps.fit(
+        source,
+        target_size,
+        method=Image.Resampling.LANCZOS,
+        centering=(0.5, 0.5),
+    )
+    background = background.filter(ImageFilter.GaussianBlur(radius=26))
+    overlay = Image.new(
+        "RGB",
+        target_size,
+        (255, 255, 255),
+    )
+    background = Image.blend(background, overlay, 0.18)
+
+    foreground = source.copy()
+    foreground.thumbnail(
+        (
+            int(target_width * 0.94),
+            int(target_height * 0.94),
+        ),
+        Image.Resampling.LANCZOS,
+    )
+    left = (target_width - foreground.width) // 2
+    top = (target_height - foreground.height) // 2
+    background.paste(foreground, (left, top))
+    return background
+
+
 def save_content_image(
     image_bytes: bytes,
     *,
     stem: str,
+    aspect_ratio: str,
 ) -> dict[str, Any]:
     try:
         with Image.open(BytesIO(image_bytes)) as image:
             image = ImageOps.exif_transpose(image)
-            image.thumbnail((1800, 1800), Image.Resampling.LANCZOS)
+            image = normalize_content_image_canvas(
+                image,
+                aspect_ratio=aspect_ratio,
+            )
 
             has_alpha = image.mode in {"RGBA", "LA"} or (
                 image.mode == "P"
@@ -14320,6 +14378,9 @@ def save_content_image(
         "filename": filename,
         "url": f"/media/{archive}",
         "mime_type": "image/webp",
+        "width": CONTENT_IMAGE_FINAL_SIZES.get(aspect_ratio, (0, 0))[0],
+        "height": CONTENT_IMAGE_FINAL_SIZES.get(aspect_ratio, (0, 0))[1],
+        "aspect_ratio": aspect_ratio,
         "size_bytes": len(final_bytes),
         "size_label": (
             f"{len(final_bytes) / 1024:.1f} KB"
@@ -14453,7 +14514,11 @@ async def generate_content_images(
         )
         safe_stem = re.sub(r"[^a-z0-9]+", "-", normalized_name.lower()).strip("-") or "content"
         images = [
-            save_content_image(image_bytes, stem=safe_stem)
+            save_content_image(
+                image_bytes,
+                stem=safe_stem,
+                aspect_ratio=aspect_ratio,
+            )
             for image_bytes in generated_images
         ]
     except Exception as error:
