@@ -724,10 +724,13 @@ async function b19bUploadCatalogRaw(
 
     const invalid = files.find(file =>
         !(
-            file.type === "video/mp4"
+            file.type === "image/jpeg"
+            || file.type === "image/png"
+            || file.type === "image/webp"
+            || file.type === "video/mp4"
             || file.type === "video/webm"
             || file.type === "video/quicktime"
-            || /\.(mp4|mov|webm)$/i.test(
+            || /\.(jpe?g|png|webp|mp4|mov|webm)$/i.test(
                 file.name
             )
         )
@@ -757,7 +760,7 @@ async function b19bUploadCatalogRaw(
 
     b19aSetStatus(
         `Mengunggah ${files.length} `
-        + "raw video..."
+        + "asset..."
     );
 
     try {
@@ -773,7 +776,7 @@ async function b19bUploadCatalogRaw(
 
         b19aSetStatus(
             data.message
-            || "Raw video berhasil diunggah.",
+            || "Asset berhasil diunggah.",
             "success"
         );
 
@@ -812,7 +815,7 @@ async function b19bUploadCatalogRaw(
 
     } catch (error) {
         b19aSetStatus(
-            `Upload raw video gagal: `
+            `Upload asset gagal: `
             + error.message,
             "error"
         );
@@ -3958,6 +3961,9 @@ function renderWorkspace(data) {
                             type="file"
                             multiple
                             accept="
+                                image/jpeg,
+                                image/png,
+                                image/webp,
                                 video/mp4,
                                 video/webm,
                                 video/quicktime
@@ -3970,7 +3976,7 @@ function renderWorkspace(data) {
                             class="button primary"
                             onclick="uploadRawVideos()"
                         >
-                            Upload Raw Video
+                            Upload Image / Video
                         </button>
                     </div>
                 </div>
@@ -4751,7 +4757,7 @@ async function uploadRawVideos() {
     if (!input || !input.files.length) {
         if (status) {
             status.textContent =
-                "Pilih file video terlebih dahulu.";
+                "Pilih file image atau video terlebih dahulu.";
         }
         return;
     }
@@ -4760,17 +4766,20 @@ async function uploadRawVideos() {
 
     const invalid = files.find(file =>
         !(
-            file.type === "video/mp4"
+            file.type === "image/jpeg"
+            || file.type === "image/png"
+            || file.type === "image/webp"
+            || file.type === "video/mp4"
             || file.type === "video/webm"
             || file.type === "video/quicktime"
-            || /\.(mp4|mov|webm)$/i.test(file.name)
+            || /\.(jpe?g|png|webp|mp4|mov|webm)$/i.test(file.name)
         )
     );
 
     if (invalid) {
         if (status) {
             status.textContent =
-                `File bukan video yang didukung: `
+                `File bukan image/video yang didukung: `
                 + invalid.name;
         }
         return;
@@ -4787,7 +4796,7 @@ async function uploadRawVideos() {
 
     if (status) {
         status.textContent =
-            `Mengunggah ${files.length} video...`;
+            `Mengunggah ${files.length} asset...`;
     }
 
     try {
@@ -4818,14 +4827,14 @@ async function uploadRawVideos() {
     } catch (error) {
         if (status) {
             status.textContent =
-                `Upload video gagal: `
+                `Upload image/video gagal: `
                 + error.message;
         }
 
     } finally {
         button.disabled = false;
         button.textContent =
-            "Upload Raw Video";
+            "Upload Image / Video";
     }
 }
 
