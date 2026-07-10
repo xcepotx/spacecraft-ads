@@ -1872,6 +1872,18 @@ function isContentImagePage() {
 function applyPageLayout() {
     const productPage = isProductLibraryPage();
     const contentPage = isContentImagePage();
+    document.body.classList.toggle(
+        "page-products",
+        productPage
+    );
+    document.body.classList.toggle(
+        "page-content-images",
+        contentPage
+    );
+    document.body.classList.toggle(
+        "page-studio",
+        !productPage && !contentPage
+    );
 
     if (studioHeroSection) {
         studioHeroSection.hidden = productPage || contentPage;
@@ -1931,9 +1943,8 @@ function openStudioPage() {
     const target = new URL(
         window.location.href
     );
-    target.searchParams.delete(
-        "page"
-    );
+    target.search = "";
+    target.hash = "";
     window.location.href = target.toString();
 }
 
@@ -5434,7 +5445,7 @@ logoutButton.addEventListener(
 multiProductMenuButton?.addEventListener(
     "click",
     () => {
-        if (isProductLibraryPage()) {
+        if (isProductLibraryPage() || isContentImagePage()) {
             openStudioPage();
             return;
         }

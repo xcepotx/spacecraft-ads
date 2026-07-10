@@ -7824,6 +7824,21 @@ canvas,
     display: none !important;
 }
 
+body.page-content-images #studioHeroSection,
+body.page-content-images #productLibraryHeader,
+body.page-content-images #productToolbar,
+body.page-content-images #productGrid,
+body.page-content-images #multiProductSection,
+body.page-products #studioHeroSection,
+body.page-products #contentImageSection,
+body.page-products #multiProductSection,
+body.page-studio #productLibraryHeader,
+body.page-studio #productToolbar,
+body.page-studio #productGrid,
+body.page-studio #contentImageSection {
+    display: none !important;
+}
+
 @media (max-width: 420px) {
     .topbar-actions {
         grid-template-columns: 1fr 1fr !important;
