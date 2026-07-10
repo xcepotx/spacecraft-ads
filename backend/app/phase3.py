@@ -1143,7 +1143,7 @@ class RawVideoAssetSettingsRequest(BaseModel):
 
     is_primary: bool = False
 
-    ads_enabled: bool = False
+    ads_enabled: bool = True
 
     trim_start: float = Field(
         default=0.0,
@@ -15243,7 +15243,7 @@ def product_raw_videos(
         ads_enabled = bool(
             asset_settings.get(
                 "ads_enabled",
-                False,
+                True,
             )
         )
 
@@ -15350,7 +15350,7 @@ def product_raw_videos(
         ads_enabled = bool(
             asset_settings.get(
                 "ads_enabled",
-                False,
+                True,
             )
         )
 

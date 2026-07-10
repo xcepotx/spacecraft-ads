@@ -258,7 +258,7 @@ def asset_to_dict(
         "ads_enabled": bool(
             settings.get(
                 "ads_enabled",
-                False,
+                True,
             )
         ),
         "created_at": (
