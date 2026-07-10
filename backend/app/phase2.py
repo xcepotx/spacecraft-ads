@@ -236,6 +236,13 @@ def format_bytes(value: int) -> str:
 def asset_to_dict(
     asset: ProductAsset,
 ) -> dict[str, Any]:
+    settings = load_asset_ads_settings(
+        asset.product_id
+    ).get(
+        str(asset.id),
+        {},
+    )
+
     return {
         "id": asset.id,
         "product_id": asset.product_id,
@@ -248,12 +255,65 @@ def asset_to_dict(
         ),
         "url": f"/media/{asset.relative_path}",
         "source": asset.source,
+        "ads_enabled": bool(
+            settings.get(
+                "ads_enabled",
+                False,
+            )
+        ),
         "created_at": (
             asset.created_at.isoformat()
             if asset.created_at
             else None
         ),
     }
+
+
+def raw_video_settings_path(
+    product_id: int,
+) -> Path:
+    folder = (
+        STORAGE_ROOT
+        / "products"
+        / str(product_id)
+    )
+
+    folder.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    return folder / "raw-video-settings.json"
+
+
+def load_asset_ads_settings(
+    product_id: int,
+) -> dict[str, dict[str, Any]]:
+    settings_path = raw_video_settings_path(
+        product_id
+    )
+
+    if not settings_path.is_file():
+        return {}
+
+    try:
+        payload = json.loads(
+            settings_path.read_text(
+                encoding="utf-8"
+            )
+        )
+
+        if not isinstance(payload, dict):
+            return {}
+
+        return {
+            str(key): value
+            for key, value in payload.items()
+            if isinstance(value, dict)
+        }
+
+    except Exception:
+        return {}
 
 
 def analysis_to_dict(

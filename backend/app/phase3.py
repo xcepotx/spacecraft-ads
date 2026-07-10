@@ -1143,6 +1143,8 @@ class RawVideoAssetSettingsRequest(BaseModel):
 
     is_primary: bool = False
 
+    ads_enabled: bool = False
+
     trim_start: float = Field(
         default=0.0,
         ge=0.0,
@@ -15168,6 +15170,7 @@ def delete_music_library_item(
 @router.get("/api/products/{product_id}/raw-videos")
 def product_raw_videos(
     product_id: int,
+    ads_only: bool = False,
     db: Session = Depends(get_db),
 ):
     product = db.get(
@@ -15216,6 +15219,16 @@ def product_raw_videos(
             {}
         )
 
+        ads_enabled = bool(
+            asset_settings.get(
+                "ads_enabled",
+                False,
+            )
+        )
+
+        if ads_only and not ads_enabled:
+            continue
+
         raw_videos.append(
             {
                 "clip_id": f"asset-{asset.id}",
@@ -15244,6 +15257,7 @@ def product_raw_videos(
                         False,
                     )
                 ),
+                "ads_enabled": ads_enabled,
                 "trim_start": float(
                     asset_settings.get(
                         "trim_start",
@@ -15307,6 +15321,21 @@ def product_raw_videos(
         ):
             continue
 
+        asset_settings = video_settings.get(
+            str(asset.id),
+            {}
+        )
+
+        ads_enabled = bool(
+            asset_settings.get(
+                "ads_enabled",
+                False,
+            )
+        )
+
+        if ads_only and not ads_enabled:
+            continue
+
         raw_videos.append(
             {
                 "clip_id": f"asset-{asset.id}",
@@ -15324,6 +15353,7 @@ def product_raw_videos(
                 "video_type": "lifestyle",
                 "fit_mode": "cover",
                 "is_primary": False,
+                "ads_enabled": ads_enabled,
                 "trim_start": 0.0,
                 "trim_end": None,
                 "duration_seconds": None,
@@ -15391,11 +15421,14 @@ def update_raw_video_asset_settings(
     if (
         not asset
         or asset.product_id != product_id
-        or asset.asset_type != "video"
+        or asset.asset_type not in {
+            "video",
+            "image",
+        }
     ):
         raise HTTPException(
             status_code=404,
-            detail="Raw video tidak ditemukan",
+            detail="Asset video/image tidak ditemukan",
         )
 
     trim_start = round(
@@ -15428,16 +15461,30 @@ def update_raw_video_asset_settings(
         product_id
     )
 
-    if payload.is_primary:
+    if (
+        asset.asset_type == "video"
+        and payload.is_primary
+    ):
         for key, item in settings.items():
             if isinstance(item, dict):
                 item["is_primary"] = False
 
+    previous_settings = settings.get(
+        str(asset_id),
+        {},
+    )
+
     settings[str(asset_id)] = {
+        **previous_settings,
         "video_type": payload.video_type,
         "fit_mode": payload.fit_mode,
         "is_primary": bool(
             payload.is_primary
+            if asset.asset_type == "video"
+            else False
+        ),
+        "ads_enabled": bool(
+            payload.ads_enabled
         ),
         "trim_start": trim_start,
         "trim_end": trim_end,

@@ -769,9 +769,7 @@ async function b19bUploadCatalogRaw(
             }
         );
 
-        delete state.rawVideosByProduct[
-            Number(productId)
-        ];
+        clearRawVideoCache(productId);
 
         b19aSetStatus(
             data.message
@@ -2127,7 +2125,7 @@ async function loadSingleProductRawVideos(productId) {
 
     try {
         const data = await api(
-            `/api/products/${productId}/raw-videos`
+            `/api/products/${productId}/raw-videos?ads_only=1`
         );
 
         const rawVideos = Array.isArray(data.raw_videos)
@@ -2479,14 +2477,48 @@ function rawVideoLabel(video) {
 }
 
 
-async function loadRawVideosForProduct(productId) {
-    if (state.rawVideosByProduct[productId]) {
-        return state.rawVideosByProduct[productId];
+function rawVideoCacheKey(productId, adsOnly = true) {
+    return `${Number(productId)}:${adsOnly ? "ads" : "all"}`;
+}
+
+
+function clearRawVideoCache(productId) {
+    delete state.rawVideosByProduct[
+        rawVideoCacheKey(productId, true)
+    ];
+    delete state.rawVideosByProduct[
+        rawVideoCacheKey(productId, false)
+    ];
+    delete state.rawVideosByProduct[
+        Number(productId)
+    ];
+}
+
+
+async function loadRawVideosForProduct(
+    productId,
+    options = {}
+) {
+    const adsOnly =
+        options.adsOnly !== false;
+    const cacheKey =
+        rawVideoCacheKey(
+            productId,
+            adsOnly
+        );
+
+    if (state.rawVideosByProduct[cacheKey]) {
+        return state.rawVideosByProduct[cacheKey];
     }
 
-    const data = await api(`/api/products/${productId}/raw-videos`);
-    state.rawVideosByProduct[productId] = data.raw_videos || [];
-    return state.rawVideosByProduct[productId];
+    const url = (
+        `/api/products/${productId}/raw-videos`
+        + (adsOnly ? "?ads_only=1" : "")
+    );
+
+    const data = await api(url);
+    state.rawVideosByProduct[cacheKey] = data.raw_videos || [];
+    return state.rawVideosByProduct[cacheKey];
 }
 
 
@@ -2501,13 +2533,16 @@ async function populateRawVideoSelect(productId, preferredClipId = "") {
     select.innerHTML = '<option value="">Memuat asset...</option>';
 
     try {
-        const rawVideos = await loadRawVideosForProduct(productId);
+        const rawVideos = await loadRawVideosForProduct(
+            productId,
+            {adsOnly: true}
+        );
 
         if (!rawVideos.length) {
             select.innerHTML = '<option value="">Belum ada video/image</option>';
             setRawVideoGenerateState(
                 productId,
-                "Belum ada video/image. Upload raw video atau buat image variation dari workspace produk."
+                "Belum ada asset Ads. Centang image/video di Product Workspace."
             );
             return;
         }
@@ -2541,7 +2576,9 @@ async function populateRawVideoSelect(productId, preferredClipId = "") {
 
 function updateRawVideoSelectionStatus(productId) {
     const video = selectedRawVideoForProduct(productId);
-    const videos = state.rawVideosByProduct[Number(productId)] || [];
+    const videos = state.rawVideosByProduct[
+        rawVideoCacheKey(productId, true)
+    ] || [];
 
     if (!video) {
         setRawVideoGenerateState(
@@ -2760,7 +2797,7 @@ function selectedRawVideoForProduct(
 
     const videos =
         state.rawVideosByProduct[
-            Number(productId)
+            rawVideoCacheKey(productId, true)
         ] || [];
 
     return videos.find(
@@ -3536,6 +3573,10 @@ function sourceMediaCard(item) {
 
 function uploadedAssetCard(asset) {
     let preview = "";
+    const canUseInAds = [
+        "image",
+        "video",
+    ].includes(asset.asset_type);
 
     if (asset.asset_type === "video") {
         preview = `
@@ -3590,6 +3631,21 @@ function uploadedAssetCard(asset) {
                         asset.size_label
                     )}
                 </small>
+
+                ${canUseInAds ? `
+                    <label class="asset-ads-toggle">
+                        <input
+                            id="assetAdsEnabled-${Number(asset.id)}"
+                            type="checkbox"
+                            ${asset.ads_enabled ? "checked" : ""}
+                            onchange="saveAssetAdsEnabled(
+                                ${Number(asset.id)},
+                                this.checked
+                            )"
+                        >
+                        <span>Pakai di dropdown Ads</span>
+                    </label>
+                ` : ""}
 
                 <button
                     onclick="deleteAsset(
@@ -4137,6 +4193,30 @@ function workspaceRawVideoCard(video) {
         `
         : "";
 
+    const mediaType =
+        video.media_type
+        || video.asset_type
+        || "video";
+
+    const preview = mediaType === "image"
+        ? `
+            <img
+                class="raw-video-preview"
+                src="${escapeHtml(video.url)}"
+                alt="${escapeHtml(video.title || video.label || "Image")}"
+                loading="lazy"
+            >
+        `
+        : `
+            <video
+                class="raw-video-preview"
+                src="${escapeHtml(video.url)}"
+                controls
+                preload="metadata"
+                playsinline
+            ></video>
+        `;
+
     return `
         <article
             class="raw-video-card
@@ -4146,13 +4226,7 @@ function workspaceRawVideoCard(video) {
             data-asset-id="${assetId}"
         >
             <div class="raw-video-preview-wrap">
-                <video
-                    class="raw-video-preview"
-                    src="${escapeHtml(video.url)}"
-                    controls
-                    preload="metadata"
-                    playsinline
-                ></video>
+                ${preview}
 
                 ${primaryBadge}
             </div>
@@ -4244,12 +4318,33 @@ function workspaceRawVideoCard(video) {
                         <input
                             id="rawVideoPrimary-${assetId}"
                             type="checkbox"
+                            ${mediaType === "image"
+                                ? "disabled"
+                                : ""}
                             ${video.is_primary
                                 ? "checked"
                                 : ""}
                         >
 
                         <span>Jadikan video utama</span>
+                    </label>
+
+                    <label
+                        class="raw-video-primary-toggle"
+                    >
+                        <input
+                            id="rawVideoAdsEnabled-${assetId}"
+                            type="checkbox"
+                            ${video.ads_enabled
+                                ? "checked"
+                                : ""}
+                            onchange="saveAssetAdsEnabled(
+                                ${assetId},
+                                this.checked
+                            )"
+                        >
+
+                        <span>Pakai di dropdown Ads</span>
                     </label>
                 </div>
 
@@ -4322,6 +4417,11 @@ async function saveRawVideoSettings(
             `rawVideoPrimary-${assetId}`
         );
 
+    const adsEnabledInput =
+        document.getElementById(
+            `rawVideoAdsEnabled-${assetId}`
+        );
+
     const status =
         document.getElementById(
             `rawVideoSettingStatus-${assetId}`
@@ -4363,7 +4463,11 @@ async function saveRawVideoSettings(
     const payload = {
         video_type: typeInput.value,
         fit_mode: fitModeInput.value || "auto",
-        is_primary: primaryInput.checked,
+        is_primary: primaryInput.checked
+            && !primaryInput.disabled,
+        ads_enabled: Boolean(
+            adsEnabledInput?.checked
+        ),
         trim_start: trimStart,
         trim_end: trimEnd,
     };
@@ -4393,9 +4497,7 @@ async function saveRawVideoSettings(
                 data.message;
         }
 
-        delete state.rawVideosByProduct[
-            Number(state.activeProductId)
-        ];
+        clearRawVideoCache(state.activeProductId);
 
         await loadWorkspaceRawVideoLibrary(
             state.activeProductId
@@ -4405,6 +4507,66 @@ async function saveRawVideoSettings(
         if (status) {
             status.textContent =
                 `Gagal menyimpan: ${error.message}`;
+        }
+    }
+}
+
+
+async function saveAssetAdsEnabled(
+    assetId,
+    enabled
+) {
+    const status =
+        document.getElementById(
+            `rawVideoSettingStatus-${assetId}`
+        )
+        || workspaceStatus;
+
+    if (!state.activeProductId) return;
+
+    if (status) {
+        status.textContent = enabled
+            ? "Mengaktifkan asset untuk Ads..."
+            : "Menghapus asset dari dropdown Ads...";
+    }
+
+    try {
+        const data = await api(
+            `/api/products/`
+            + `${state.activeProductId}`
+            + `/raw-videos/${assetId}/settings`,
+            {
+                method: "PUT",
+                headers: {
+                    "Content-Type":
+                        "application/json",
+                },
+                body: JSON.stringify({
+                    video_type: "lifestyle",
+                    fit_mode: "cover",
+                    is_primary: false,
+                    ads_enabled: Boolean(enabled),
+                    trim_start: 0,
+                    trim_end: null,
+                }),
+            }
+        );
+
+        if (status) {
+            status.textContent =
+                data.message;
+        }
+
+        clearRawVideoCache(state.activeProductId);
+
+        await openWorkspace(
+            state.activeProductId
+        );
+
+    } catch (error) {
+        if (status) {
+            status.textContent =
+                `Gagal menyimpan filter Ads: ${error.message}`;
         }
     }
 }
@@ -4432,13 +4594,12 @@ async function loadWorkspaceRawVideoLibrary(
     `;
 
     try {
-        delete state.rawVideosByProduct[
-            Number(productId)
-        ];
+        clearRawVideoCache(productId);
 
         const videos =
             await loadRawVideosForProduct(
-                Number(productId)
+                Number(productId),
+                {adsOnly: false}
             );
 
         if (!videos.length) {
@@ -4557,9 +4718,7 @@ async function uploadRawVideos() {
 
         input.value = "";
 
-        delete state.rawVideosByProduct[
-            Number(state.activeProductId)
-        ];
+        clearRawVideoCache(state.activeProductId);
 
         await loadWorkspaceRawVideoLibrary(
             state.activeProductId
@@ -4717,9 +4876,7 @@ async function deleteRawVideo(assetId) {
                 data.message;
         }
 
-        delete state.rawVideosByProduct[
-            Number(state.activeProductId)
-        ];
+        clearRawVideoCache(state.activeProductId);
 
         await loadWorkspaceRawVideoLibrary(
             state.activeProductId
@@ -4776,6 +4933,8 @@ async function uploadAssets() {
 
         workspaceStatus.textContent =
             data.message;
+
+        clearRawVideoCache(state.activeProductId);
 
         await openWorkspace(
             state.activeProductId
@@ -4869,6 +5028,8 @@ async function generateImageVariations() {
         workspaceStatus.textContent =
             data.message;
 
+        clearRawVideoCache(state.activeProductId);
+
         await openWorkspace(
             state.activeProductId
         );
@@ -4904,6 +5065,8 @@ async function deleteAsset(assetId) {
 
         workspaceStatus.textContent =
             data.message;
+
+        clearRawVideoCache(state.activeProductId);
 
         await openWorkspace(
             state.activeProductId
@@ -5014,6 +5177,7 @@ window.uploadAssets = uploadAssets;
 window.uploadRawVideos = uploadRawVideos;
 window.deleteRawVideo = deleteRawVideo;
 window.saveRawVideoSettings = saveRawVideoSettings;
+window.saveAssetAdsEnabled = saveAssetAdsEnabled;
 window.deleteAsset = deleteAsset;
 window.generateImageVariations =
     generateImageVariations;

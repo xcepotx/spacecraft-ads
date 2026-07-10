@@ -7579,6 +7579,29 @@ canvas,
     background: #eef4ff !important;
 }
 
+.workspace .asset-ads-toggle,
+.workspace .raw-video-primary-toggle {
+    align-items: center;
+    display: inline-flex;
+    gap: 8px;
+}
+
+.workspace .asset-ads-toggle {
+    border: 1px solid #d8e3f3;
+    border-radius: 999px;
+    color: #23314d;
+    font-size: 11px;
+    font-weight: 800;
+    margin-top: 8px;
+    padding: 6px 10px;
+    width: fit-content;
+}
+
+.workspace .asset-ads-toggle input,
+.workspace .raw-video-primary-toggle input {
+    accent-color: #5d5fef;
+}
+
 /* Catalog filter control for the raw asset picker. */
 .multi-product-panel .picker-head-actions {
     align-items: center;
