@@ -455,6 +455,90 @@
                 </label>
             </div>
 
+            <div class="campaign-visual-assets">
+                <div class="campaign-visual-card">
+                    <div>
+                        <strong>Custom Hook Image</strong>
+                        <p>
+                            Opsional. Jika kosong, hook visual dibuat otomatis dari template.
+                        </p>
+                    </div>
+
+                    <input
+                        id="campaignHookImageFile"
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                    >
+
+                    <div class="campaign-visual-actions">
+                        <button
+                            id="campaignHookImageUploadButton"
+                            type="button"
+                            class="button secondary"
+                            onclick="uploadCampaignVisualAsset('hook')"
+                        >
+                            Upload Hook
+                        </button>
+
+                        <button
+                            type="button"
+                            class="mini-button"
+                            onclick="clearCampaignVisualAsset('hook')"
+                        >
+                            Hapus
+                        </button>
+                    </div>
+
+                    <span
+                        id="campaignHookImageStatus"
+                        class="campaign-visual-status"
+                    >
+                        Belum ada custom hook image.
+                    </span>
+                </div>
+
+                <div class="campaign-visual-card">
+                    <div>
+                        <strong>Custom CTA Image</strong>
+                        <p>
+                            Opsional. Jika kosong, CTA visual dibuat otomatis dari template.
+                        </p>
+                    </div>
+
+                    <input
+                        id="campaignCtaImageFile"
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                    >
+
+                    <div class="campaign-visual-actions">
+                        <button
+                            id="campaignCtaImageUploadButton"
+                            type="button"
+                            class="button secondary"
+                            onclick="uploadCampaignVisualAsset('cta')"
+                        >
+                            Upload CTA
+                        </button>
+
+                        <button
+                            type="button"
+                            class="mini-button"
+                            onclick="clearCampaignVisualAsset('cta')"
+                        >
+                            Hapus
+                        </button>
+                    </div>
+
+                    <span
+                        id="campaignCtaImageStatus"
+                        class="campaign-visual-status"
+                    >
+                        Belum ada custom CTA image.
+                    </span>
+                </div>
+            </div>
+
             <div class="b18c1-unified-toolbar">
                 <button
                     id="b18c1GenerateBothButton"

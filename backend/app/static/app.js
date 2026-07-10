@@ -23,6 +23,10 @@ const state = {
         "meta",
     // B19C_CREATIVE_SET_STATE
     b19cCreativeSet: null,
+    campaignVisualAssets: {
+        hook: null,
+        cta: null,
+    },
     musicLibrary: [],
     expandedCampaignIds: new Set(),
     campaignHistoryPage: 1,
@@ -4377,6 +4381,111 @@ async function uploadRawVideos() {
 }
 
 
+function campaignVisualElements(slot) {
+    const normalizedSlot = slot === "cta" ? "cta" : "hook";
+    const prefix = normalizedSlot === "cta"
+        ? "campaignCtaImage"
+        : "campaignHookImage";
+
+    return {
+        slot: normalizedSlot,
+        input: document.getElementById(`${prefix}File`),
+        button: document.getElementById(`${prefix}UploadButton`),
+        status: document.getElementById(`${prefix}Status`),
+    };
+}
+
+
+function updateCampaignVisualStatus(slot, message, stateClass = "") {
+    const { status } = campaignVisualElements(slot);
+
+    if (!status) return;
+
+    status.classList.remove("is-ready", "is-error");
+    if (stateClass) {
+        status.classList.add(stateClass);
+    }
+    status.textContent = message;
+}
+
+
+async function uploadCampaignVisualAsset(slot) {
+    const elements = campaignVisualElements(slot);
+    const file = elements.input?.files?.[0];
+
+    if (!file) {
+        updateCampaignVisualStatus(
+            slot,
+            "Pilih image terlebih dahulu.",
+            "is-error"
+        );
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append("slot", elements.slot);
+    formData.append("file", file);
+
+    if (elements.button) {
+        elements.button.disabled = true;
+        elements.button.textContent = "Mengupload...";
+    }
+
+    updateCampaignVisualStatus(
+        slot,
+        "Mengupload visual campaign..."
+    );
+
+    try {
+        const data = await api(
+            "/api/campaign-visual-assets",
+            {
+                method: "POST",
+                body: formData,
+            }
+        );
+
+        state.campaignVisualAssets[elements.slot] = data.asset || null;
+        updateCampaignVisualStatus(
+            slot,
+            `${data.message}: ${data.asset?.original_name || file.name}`,
+            "is-ready"
+        );
+    } catch (error) {
+        state.campaignVisualAssets[elements.slot] = null;
+        updateCampaignVisualStatus(
+            slot,
+            `Upload gagal: ${error.message}`,
+            "is-error"
+        );
+    } finally {
+        if (elements.button) {
+            elements.button.disabled = false;
+            elements.button.textContent = elements.slot === "cta"
+                ? "Upload CTA"
+                : "Upload Hook";
+        }
+    }
+}
+
+
+function clearCampaignVisualAsset(slot) {
+    const elements = campaignVisualElements(slot);
+
+    state.campaignVisualAssets[elements.slot] = null;
+    if (elements.input) {
+        elements.input.value = "";
+    }
+
+    updateCampaignVisualStatus(
+        slot,
+        elements.slot === "cta"
+            ? "Belum ada custom CTA image."
+            : "Belum ada custom hook image."
+    );
+}
+
+
 async function deleteRawVideo(assetId) {
     if (!confirm(
         "Hapus raw video ini?"
@@ -6453,6 +6562,12 @@ function buildAutomationCampaignPayload() {
 
         cta: document.getElementById("multiCampaignCta")?.value.trim() || null,
 
+        hook_image_asset_id:
+            state.campaignVisualAssets?.hook?.asset_id || null,
+
+        cta_image_asset_id:
+            state.campaignVisualAssets?.cta?.asset_id || null,
+
         duration_seconds: Number(
             document.getElementById(
                 "multiCampaignDuration"
@@ -7010,8 +7125,31 @@ async function generateMultiProductCampaign() {
     }
 
     if (productClips.some(item => !item.clip_id)) {
-        message.textContent = "Setiap produk terpilih harus punya raw video real.";
+        message.textContent = "Setiap produk terpilih harus punya asset video/image.";
         return;
+    }
+
+    const missingVisuals = [];
+    if (!state.campaignVisualAssets?.hook?.asset_id) {
+        missingVisuals.push("Hook");
+    }
+    if (!state.campaignVisualAssets?.cta?.asset_id) {
+        missingVisuals.push("CTA");
+    }
+
+    if (missingVisuals.length) {
+        const proceed = confirm(
+            `${missingVisuals.join(" dan ")} image belum diupload.\n\n`
+            + "Sistem akan membuat visual otomatis dari template, hook, "
+            + "CTA, promo, dan daftar produk yang sudah ada.\n\n"
+            + "Lanjut generate?"
+        );
+
+        if (!proceed) {
+            message.textContent =
+                "Generate dibatalkan. Upload image hook/CTA jika ingin custom visual.";
+            return;
+        }
     }
 
     if (rawCatalogSubmissionInFlight) {
@@ -7131,6 +7269,10 @@ async function generateMultiProductCampaign() {
             // B18C_RAW_COPY_PAYLOAD
             hook: document.getElementById("multiCampaignHook")?.value.trim() || null,
             cta: document.getElementById("multiCampaignCta")?.value.trim() || null,
+            hook_image_asset_id:
+                state.campaignVisualAssets?.hook?.asset_id || null,
+            cta_image_asset_id:
+                state.campaignVisualAssets?.cta?.asset_id || null,
             duration_seconds: Number(document.getElementById("multiCampaignDuration").value),
             aspect_ratio: document.getElementById("multiCampaignAspect").value,
             export_preset:
@@ -10471,6 +10613,8 @@ window.updateMusicVolumeLabel = updateMusicVolumeLabel;
 window.previewSelectedMusic = previewSelectedMusic;
 window.uploadCatalogMusic = uploadCatalogMusic;
 window.deleteCatalogMusic = deleteCatalogMusic;
+window.uploadCampaignVisualAsset = uploadCampaignVisualAsset;
+window.clearCampaignVisualAsset = clearCampaignVisualAsset;
 window.selectVisibleCampaignProducts = selectVisibleCampaignProducts;
 window.renderB13VariantPreview = renderB13VariantPreview;
 window.updateB13VariantCount = updateB13VariantCount;

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
 from redis import Redis
 from rq import Queue, Retry
@@ -51,6 +51,7 @@ def ads_published_product_condition():
 STORAGE_ROOT = Path(os.getenv("STORAGE_PATH", "/app/storage"))
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 FONT_FILE = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+CAMPAIGN_VISUAL_ASSET_DIR = "campaign-visual-assets"
 
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
 ELEVENLABS_BASE_URL = os.getenv(
@@ -978,6 +979,16 @@ class RawVideoCatalogRequest(BaseModel):
     cta: str | None = Field(
         default=None,
         max_length=140,
+    )
+    hook_image_asset_id: str | None = Field(
+        default=None,
+        min_length=32,
+        max_length=32,
+    )
+    cta_image_asset_id: str | None = Field(
+        default=None,
+        min_length=32,
+        max_length=32,
     )
     # B18C_RAW_COPY_FIELDS_END
     product_clips: list[RawCatalogClipSelection] = Field(
@@ -10893,6 +10904,119 @@ def raw_catalog_promo_visual_lines(
     return lines[:3]
 # B18E_CLOSING_HELPERS_END
 
+
+def campaign_visual_asset_root() -> Path:
+    root = STORAGE_ROOT / CAMPAIGN_VISUAL_ASSET_DIR
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def validate_campaign_visual_asset_id(asset_id: str) -> str:
+    value = str(asset_id or "").strip()
+    if not re.fullmatch(r"[a-f0-9]{32}", value):
+        raise HTTPException(
+            status_code=422,
+            detail="Asset visual campaign tidak valid",
+        )
+    return value
+
+
+def campaign_visual_metadata_path(asset_id: str) -> Path:
+    return campaign_visual_asset_root() / f"{validate_campaign_visual_asset_id(asset_id)}.json"
+
+
+def read_campaign_visual_asset(asset_id: str | None) -> dict[str, Any] | None:
+    if not asset_id:
+        return None
+
+    metadata_path = campaign_visual_metadata_path(asset_id)
+    if not metadata_path.is_file():
+        raise HTTPException(
+            status_code=422,
+            detail="Asset visual campaign tidak ditemukan",
+        )
+
+    try:
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except Exception as error:
+        raise HTTPException(
+            status_code=422,
+            detail="Metadata asset visual campaign tidak valid",
+        ) from error
+
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="Metadata asset visual campaign tidak valid",
+        )
+
+    archive = str(payload.get("archive") or "").strip()
+    candidate = STORAGE_ROOT / archive
+
+    try:
+        candidate.resolve().relative_to(STORAGE_ROOT.resolve())
+    except ValueError as error:
+        raise HTTPException(
+            status_code=422,
+            detail="Path asset visual campaign tidak valid",
+        ) from error
+
+    if not candidate.is_file() or candidate.stat().st_size < 100:
+        raise HTTPException(
+            status_code=422,
+            detail="File asset visual campaign tidak ditemukan",
+        )
+
+    return payload
+
+
+def raw_catalog_visual_asset_path(
+    config: dict[str, Any],
+    key: str,
+) -> Path | None:
+    asset = config.get(key)
+    if not isinstance(asset, dict):
+        return None
+
+    archive = str(asset.get("archive") or "").strip()
+    if not archive:
+        return None
+
+    candidate = STORAGE_ROOT / archive
+
+    try:
+        candidate.resolve().relative_to(STORAGE_ROOT.resolve())
+    except ValueError:
+        return None
+
+    if not candidate.is_file() or candidate.stat().st_size < 100:
+        return None
+
+    return candidate
+
+
+def raw_catalog_visual_overlay_chain(
+    input_index: int,
+    label: str,
+    width: int,
+    height: int,
+    start: float,
+    end: float,
+    source_label: str,
+    output_label: str,
+) -> str:
+    prepared_label = f"{label}visual"
+    return (
+        f"[{input_index}:v]"
+        f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},setsar=1,format=rgba"
+        f"[{prepared_label}];"
+        f"[{source_label}][{prepared_label}]"
+        "overlay=0:0:"
+        f"enable='between(t\\,{start:.3f}\\,{end:.3f})'"
+        f"[{output_label}]"
+    )
+
 def overlay_raw_catalog_video(
     input_path: Path,
     config: dict[str, Any],
@@ -11730,6 +11854,15 @@ def overlay_raw_catalog_video(
         0.0,
     )
 
+    hook_visual_path = raw_catalog_visual_asset_path(
+        config,
+        "hook_visual_asset",
+    )
+    cta_visual_path = raw_catalog_visual_asset_path(
+        config,
+        "cta_visual_asset",
+    )
+
     command = [
         "ffmpeg",
         "-y",
@@ -11737,11 +11870,14 @@ def overlay_raw_catalog_video(
         str(input_path),
     ]
 
+    next_input_index = 1
+
     if voiceover_path:
         command.extend([
             "-i",
             str(voiceover_path),
         ])
+        next_input_index += 1
 
     if music_path:
         command.extend([
@@ -11750,10 +11886,94 @@ def overlay_raw_catalog_video(
             "-i",
             str(music_path),
         ])
+        next_input_index += 1
 
-    video_chain = (
-        f"[0:v]{video_filter}[v]"
-    )
+    silent_input_index: int | None = None
+
+    if not voiceover_path and not music_path:
+        silent_input_index = next_input_index
+        next_input_index += 1
+        command.extend([
+            "-f",
+            "lavfi",
+            "-t",
+            str(duration),
+            "-i",
+            (
+                "anullsrc="
+                "channel_layout=stereo:"
+                "sample_rate=44100"
+            ),
+        ])
+
+    hook_visual_input_index: int | None = None
+    cta_visual_input_index: int | None = None
+
+    if hook_visual_path:
+        hook_visual_input_index = next_input_index
+        next_input_index += 1
+        command.extend([
+            "-loop",
+            "1",
+            "-t",
+            str(duration),
+            "-i",
+            str(hook_visual_path),
+        ])
+
+    if cta_visual_path:
+        cta_visual_input_index = next_input_index
+        next_input_index += 1
+        command.extend([
+            "-loop",
+            "1",
+            "-t",
+            str(duration),
+            "-i",
+            str(cta_visual_path),
+        ])
+
+    video_chain = f"[0:v]{video_filter}[vbase]"
+    current_video_label = "vbase"
+    visual_step = 0
+
+    if hook_visual_input_index is not None:
+        visual_step += 1
+        next_video_label = f"vvisual{visual_step}"
+        video_chain += (
+            ";"
+            + raw_catalog_visual_overlay_chain(
+                input_index=hook_visual_input_index,
+                label="hook",
+                width=width,
+                height=height,
+                start=0.0,
+                end=hook_end,
+                source_label=current_video_label,
+                output_label=next_video_label,
+            )
+        )
+        current_video_label = next_video_label
+
+    if cta_visual_input_index is not None:
+        visual_step += 1
+        next_video_label = f"vvisual{visual_step}"
+        video_chain += (
+            ";"
+            + raw_catalog_visual_overlay_chain(
+                input_index=cta_visual_input_index,
+                label="cta",
+                width=width,
+                height=height,
+                start=final_start,
+                end=float(duration),
+                source_label=current_video_label,
+                output_label=next_video_label,
+            )
+        )
+        current_video_label = next_video_label
+
+    video_chain += f";[{current_video_label}]format=yuv420p[v]"
 
     if voiceover_path and music_path:
         music_input_index = 2
@@ -11890,21 +12110,8 @@ def overlay_raw_catalog_video(
             0.0,
         )
 
-        command.extend([
-            "-f",
-            "lavfi",
-            "-t",
-            str(duration),
-            "-i",
-            (
-                "anullsrc="
-                "channel_layout=stereo:"
-                "sample_rate=44100"
-            ),
-        ])
-
         silent_chain = (
-            "[1:a]"
+            f"[{silent_input_index}:a]"
             "aresample=44100,"
             "aformat=sample_fmts=fltp:"
             "channel_layouts=stereo,"
@@ -14809,6 +15016,123 @@ async def upload_music_library(
     }
 
 
+@router.post("/api/campaign-visual-assets")
+async def upload_campaign_visual_asset(
+    slot: str = Form(...),
+    file: UploadFile = File(...),
+):
+    normalized_slot = str(slot or "").strip().lower()
+    if normalized_slot not in {"hook", "cta"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Slot visual harus hook atau cta",
+        )
+
+    original_name = Path(file.filename or "visual").name
+    extension = Path(original_name).suffix.lower()
+    allowed_extensions = {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+    }
+
+    if extension not in allowed_extensions:
+        raise HTTPException(
+            status_code=415,
+            detail=(
+                "Format visual tidak didukung. "
+                "Gunakan PNG, JPG, JPEG, atau WEBP."
+            ),
+        )
+
+    content_type = str(file.content_type or "").lower()
+    if content_type and not content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=415,
+            detail="File visual harus berupa image",
+        )
+
+    max_bytes = 20 * 1024 * 1024
+    asset_id = uuid.uuid4().hex
+    stored_name = f"{normalized_slot}-{asset_id}{extension}"
+    root = campaign_visual_asset_root()
+    absolute_path = root / stored_name
+    metadata_path = campaign_visual_metadata_path(asset_id)
+    total = 0
+
+    try:
+        with absolute_path.open("wb") as output:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+
+                total += len(chunk)
+                if total > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="Ukuran image maksimal 20 MB",
+                    )
+
+                output.write(chunk)
+
+        await file.close()
+
+        if total < 100:
+            raise HTTPException(
+                status_code=400,
+                detail="File visual terlalu kecil atau kosong",
+            )
+
+        archive = absolute_path.relative_to(STORAGE_ROOT).as_posix()
+        payload = {
+            "asset_id": asset_id,
+            "slot": normalized_slot,
+            "original_name": original_name,
+            "stored_name": stored_name,
+            "archive": archive,
+            "url": f"/media/{archive}",
+            "content_type": (
+                content_type
+                or mimetypes.guess_type(original_name)[0]
+                or "image/png"
+            ),
+            "size_bytes": total,
+            "created_at": now().isoformat(),
+        }
+
+        metadata_path.write_text(
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        return {
+            "ok": True,
+            "message": (
+                "Visual "
+                + ("Hook" if normalized_slot == "hook" else "CTA")
+                + " berhasil diupload"
+            ),
+            "asset": payload,
+        }
+    except HTTPException:
+        absolute_path.unlink(missing_ok=True)
+        metadata_path.unlink(missing_ok=True)
+        raise
+    except Exception as error:
+        absolute_path.unlink(missing_ok=True)
+        metadata_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Upload visual gagal: {error}",
+        ) from error
+
+
 @router.delete("/api/music-library/{music_id}")
 def delete_music_library_item(
     music_id: str,
@@ -15778,6 +16102,13 @@ def create_raw_video_catalog_campaign(
                 payload.music_ducking
             ),
         }
+
+    hook_visual_asset = read_campaign_visual_asset(
+        payload.hook_image_asset_id
+    )
+    cta_visual_asset = read_campaign_visual_asset(
+        payload.cta_image_asset_id
+    )
 
     if payload.voiceover_enabled:
         if not ELEVENLABS_API_KEY:
@@ -16773,6 +17104,8 @@ def create_raw_video_catalog_campaign(
             ),
             "hook": hook,
             "cta": cta,
+            "hook_visual_asset": hook_visual_asset,
+            "cta_visual_asset": cta_visual_asset,
             "audience": payload.audience,
             "min_order_qty": payload.min_order_qty,
             "duration_seconds": payload.duration_seconds,
