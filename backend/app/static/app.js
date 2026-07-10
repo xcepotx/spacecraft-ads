@@ -52,6 +52,21 @@ const logoutButton =
 const multiProductMenuButton =
     document.getElementById("multiProductMenuButton");
 
+const productLibraryMenuButton =
+    document.getElementById("productLibraryMenuButton");
+
+const backToStudioButton =
+    document.getElementById("backToStudioButton");
+
+const studioHeroSection =
+    document.getElementById("studioHeroSection");
+
+const productLibraryHeader =
+    document.getElementById("productLibraryHeader");
+
+const productToolbar =
+    document.getElementById("productToolbar");
+
 const multiProductSection =
     document.getElementById("multiProductSection");
 
@@ -1818,6 +1833,67 @@ function toggleCatalogProductFilter(input) {
 }
 
 
+function isProductLibraryPage() {
+    return new URLSearchParams(
+        window.location.search
+    ).get("page") === "products";
+}
+
+
+function applyPageLayout() {
+    const productPage = isProductLibraryPage();
+
+    if (studioHeroSection) {
+        studioHeroSection.hidden = productPage;
+    }
+
+    if (multiProductSection) {
+        multiProductSection.hidden = productPage;
+    }
+
+    if (productLibraryHeader) {
+        productLibraryHeader.hidden = !productPage;
+    }
+
+    if (productToolbar) {
+        productToolbar.hidden = !productPage;
+    }
+
+    if (productGrid) {
+        productGrid.hidden = !productPage;
+    }
+
+    if (multiProductMenuButton) {
+        multiProductMenuButton.textContent = productPage
+            ? "Studio Generator"
+            : "Multi Produk";
+    }
+}
+
+
+function openProductLibraryPage() {
+    const target = new URL(
+        window.location.href
+    );
+    target.searchParams.set(
+        "page",
+        "products"
+    );
+    window.location.href = target.toString();
+}
+
+
+function openStudioPage() {
+    const target = new URL(
+        window.location.href
+    );
+    target.searchParams.delete(
+        "page"
+    );
+    window.location.href = target.toString();
+}
+
+
 
 function renderMultiProductPicker() {
     if (!multiProductPicker) return;
@@ -3264,8 +3340,13 @@ async function loadHealth() {
 
 
 async function loadProducts() {
-    globalStatus.textContent =
-        "Memuat produk published...";
+    const productPage =
+        isProductLibraryPage();
+
+    if (productPage) {
+        globalStatus.textContent =
+            "Memuat produk published...";
+    }
 
     const params = new URLSearchParams({
         limit: "100",
@@ -3307,34 +3388,41 @@ async function loadProducts() {
         renderMultiProductPicker();
         renderSingleProductControls();
 
-        if (!publishedProducts.length) {
-            productGrid.innerHTML = `
-                <div class="empty">
-                    Tidak ada produk published.
-                    Produk draft dan archived
-                    disembunyikan dari Ads.
-                </div>
-            `;
-        } else {
-            productGrid.innerHTML =
-                publishedProducts
-                    .map(productCard)
-                    .join("");
+        if (productPage) {
+            if (!publishedProducts.length) {
+                productGrid.innerHTML = `
+                    <div class="empty">
+                        Tidak ada produk published.
+                        Produk draft dan archived
+                        disembunyikan dari Ads.
+                    </div>
+                `;
+            } else {
+                productGrid.innerHTML =
+                    publishedProducts
+                        .map(productCard)
+                        .join("");
+            }
+
+            globalStatus.textContent =
+                `${publishedProducts.length} dari `
+                + `${Number(data.total || 0)} `
+                + "produk published ditampilkan";
+        } else if (productGrid) {
+            productGrid.innerHTML = "";
+            globalStatus.textContent = "";
         }
 
-        globalStatus.textContent =
-            `${publishedProducts.length} dari `
-            + `${Number(data.total || 0)} `
-            + "produk published ditampilkan";
-
     } catch (error) {
-        productGrid.innerHTML = `
-            <div class="empty">
-                ${escapeHtml(
-                    error.message
-                )}
-            </div>
-        `;
+        if (productPage) {
+            productGrid.innerHTML = `
+                <div class="empty">
+                    ${escapeHtml(
+                        error.message
+                    )}
+                </div>
+            `;
+        }
 
         globalStatus.textContent =
             "Gagal memuat produk";
@@ -4858,6 +4946,11 @@ logoutButton.addEventListener(
 multiProductMenuButton?.addEventListener(
     "click",
     () => {
+        if (isProductLibraryPage()) {
+            openStudioPage();
+            return;
+        }
+
         loadMultiVoiceOptions();
         loadCatalogMusicLibrary();
         multiProductSection?.scrollIntoView({
@@ -4865,6 +4958,16 @@ multiProductMenuButton?.addEventListener(
             block: "start",
         });
     }
+);
+
+productLibraryMenuButton?.addEventListener(
+    "click",
+    openProductLibraryPage
+);
+
+backToStudioButton?.addEventListener(
+    "click",
+    openStudioPage
 );
 
 generateMultiCampaignButton?.addEventListener(
@@ -4915,6 +5018,7 @@ window.deleteAsset = deleteAsset;
 window.generateImageVariations =
     generateImageVariations;
 
+applyPageLayout();
 loadHealth();
 loadProducts();
 loadB19aCatalogs();
