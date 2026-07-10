@@ -6,11 +6,13 @@ import os
 import re
 import shutil
 import uuid
+from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import httpx
+from PIL import Image, ImageOps, UnidentifiedImageError
 from fastapi import (
     APIRouter,
     Depends,
@@ -47,6 +49,14 @@ STORAGE_ROOT = Path(
 
 MAX_UPLOAD_MB = int(
     os.getenv("MAX_UPLOAD_MB", "200")
+)
+
+ASSET_IMAGE_MAX_DIMENSION = int(
+    os.getenv("ASSET_IMAGE_MAX_DIMENSION", "1600")
+)
+
+ASSET_IMAGE_WEBP_QUALITY = int(
+    os.getenv("ASSET_IMAGE_WEBP_QUALITY", "88")
 )
 
 GEMINI_API_KEY = os.getenv(
@@ -380,6 +390,61 @@ def infer_asset_type(
             "M4A, atau OGG."
         ),
     )
+
+
+def compress_uploaded_image(
+    raw_bytes: bytes,
+) -> tuple[bytes, str, str]:
+    try:
+        with Image.open(BytesIO(raw_bytes)) as image:
+            image = ImageOps.exif_transpose(image)
+
+            if ASSET_IMAGE_MAX_DIMENSION > 0:
+                image.thumbnail(
+                    (
+                        ASSET_IMAGE_MAX_DIMENSION,
+                        ASSET_IMAGE_MAX_DIMENSION,
+                    ),
+                    Image.Resampling.LANCZOS,
+                )
+
+            has_alpha = image.mode in {
+                "RGBA",
+                "LA",
+            } or (
+                image.mode == "P"
+                and "transparency" in image.info
+            )
+
+            output_image = image.convert(
+                "RGBA" if has_alpha else "RGB"
+            )
+
+            output = BytesIO()
+            output_image.save(
+                output,
+                format="WEBP",
+                quality=max(
+                    1,
+                    min(
+                        100,
+                        ASSET_IMAGE_WEBP_QUALITY,
+                    ),
+                ),
+                method=6,
+            )
+
+            return (
+                output.getvalue(),
+                ".webp",
+                "image/webp",
+            )
+
+    except UnidentifiedImageError as error:
+        raise HTTPException(
+            status_code=415,
+            detail="File image tidak bisa dibaca",
+        ) from error
 
 
 def parse_ai_json(
@@ -1212,9 +1277,37 @@ async def upload_assets(
                 extension,
             )
 
+            raw_bytes = await upload.read()
+            await upload.close()
+
+            original_size = len(raw_bytes)
+
+            if original_size > max_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        f"{original_name} "
+                        f"melebihi "
+                        f"{MAX_UPLOAD_MB} MB"
+                    ),
+                )
+
+            stored_extension = extension
+            stored_mime_type = mime_type
+            file_bytes = raw_bytes
+
+            if asset_type == "image":
+                (
+                    file_bytes,
+                    stored_extension,
+                    stored_mime_type,
+                ) = compress_uploaded_image(
+                    raw_bytes
+                )
+
             stored_name = (
                 f"{uuid.uuid4().hex}"
-                f"{extension}"
+                f"{stored_extension}"
             )
 
             absolute_path = (
@@ -1226,34 +1319,11 @@ async def upload_assets(
                 absolute_path
             )
 
-            file_size = 0
+            absolute_path.write_bytes(
+                file_bytes
+            )
 
-            with absolute_path.open(
-                "wb"
-            ) as output:
-                while True:
-                    chunk = await upload.read(
-                        1024 * 1024
-                    )
-
-                    if not chunk:
-                        break
-
-                    file_size += len(chunk)
-
-                    if file_size > max_bytes:
-                        raise HTTPException(
-                            status_code=413,
-                            detail=(
-                                f"{original_name} "
-                                f"melebihi "
-                                f"{MAX_UPLOAD_MB} MB"
-                            ),
-                        )
-
-                    output.write(chunk)
-
-            await upload.close()
+            file_size = len(file_bytes)
 
             relative_path = (
                 absolute_path
@@ -1266,7 +1336,7 @@ async def upload_assets(
                 asset_type=asset_type,
                 original_name=original_name,
                 stored_name=stored_name,
-                mime_type=mime_type,
+                mime_type=stored_mime_type,
                 size_bytes=file_size,
                 relative_path=relative_path,
                 source="upload",
