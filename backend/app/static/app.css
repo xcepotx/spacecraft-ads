@@ -7578,3 +7578,47 @@ canvas,
     color: #182235 !important;
     background: #eef4ff !important;
 }
+
+/* Catalog filter control for the raw asset picker. */
+.multi-product-panel .picker-head-actions {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: flex-end;
+}
+
+.multi-product-panel .catalog-filter-toggle {
+    align-items: center;
+    background: #f8fbff;
+    border: 1px solid #d7e2f3;
+    border-radius: 999px;
+    color: #23314d;
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 12px;
+    font-weight: 800;
+    gap: 8px;
+    min-height: 34px;
+    padding: 7px 12px;
+}
+
+.multi-product-panel .catalog-filter-toggle input {
+    accent-color: #5d5fef;
+    height: 15px;
+    margin: 0;
+    width: 15px;
+}
+
+.multi-product-panel .catalog-filter-toggle span {
+    color: inherit;
+    display: inline;
+    margin: 0;
+}
+
+@media (max-width: 720px) {
+    .multi-product-panel .picker-head-actions {
+        justify-content: flex-start;
+        width: 100%;
+    }
+}

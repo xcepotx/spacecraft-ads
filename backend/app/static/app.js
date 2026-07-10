@@ -21,6 +21,7 @@ const state = {
         "spacecraft",
     b19aPricingSource:
         "meta",
+    filterProductsBySelectedCatalog: true,
     // B19C_CREATIVE_SET_STATE
     b19cCreativeSet: null,
     campaignVisualAssets: {
@@ -533,14 +534,8 @@ async function b19cPrepareFromCatalog(
         );
     }
 
-    const productIds = (
-        catalog.products || []
-    ).map(
-        item =>
-            Number(
-                item.local_product_id
-            )
-    ).filter(Boolean);
+    const productIds =
+        b19aCatalogProductIds(catalog);
 
     const data = await api(
         "/api/creative-sets/prepare",
@@ -1527,12 +1522,17 @@ async function b19aApplyCatalogObject(
         return false;
     }
 
+    const availableProductIds = new Set(
+        (state.products || []).map(
+            product => Number(product.id)
+        )
+    );
+
     const missingInPicker =
         productIds.filter(
             productId =>
-                !document.querySelector(
-                    ".campaignProductCheckbox"
-                    + `[value="${productId}"]`
+                !availableProductIds.has(
+                    Number(productId)
                 )
         );
 
@@ -1566,6 +1566,8 @@ async function b19aApplyCatalogObject(
 
     state.catalogProductOrder =
         [...productIds];
+
+    renderMultiProductPicker();
 
     for (const productId of productIds) {
         const input = document.querySelector(
@@ -1732,14 +1734,8 @@ function b19aCatalogSelectionError(
         );
     }
 
-    const expected = (
-        catalog.products || []
-    ).map(
-        item =>
-            Number(
-                item.local_product_id
-            )
-    ).filter(Boolean);
+    const expected =
+        b19aCatalogProductIds(catalog);
 
     if (
         expected.length
@@ -1763,6 +1759,65 @@ function b19aCatalogSelectionError(
 }
 
 
+function b19aCatalogProductIds(catalog) {
+    return (
+        catalog?.products || []
+    ).map(
+        item =>
+            Number(
+                item.local_product_id
+                || item.product_id
+                || item.id
+            )
+    ).filter(Boolean);
+}
+
+
+function multiProductPickerProducts() {
+    const products = state.products || [];
+    const catalogIds =
+        b19aCatalogProductIds(
+            state.b19aLinkedCatalog
+        );
+
+    if (
+        !state.filterProductsBySelectedCatalog
+        || !catalogIds.length
+    ) {
+        return {
+            products,
+            filtered: false,
+            catalogIds,
+        };
+    }
+
+    const catalogIdSet = new Set(
+        catalogIds.map(Number)
+    );
+
+    return {
+        products: products.filter(
+            product =>
+                catalogIdSet.has(
+                    Number(product.id)
+                )
+        ),
+        filtered: true,
+        catalogIds,
+    };
+}
+
+
+function toggleCatalogProductFilter(input) {
+    state.filterProductsBySelectedCatalog =
+        Boolean(input?.checked);
+
+    renderMultiProductPicker();
+    updateCatalogOrderUI();
+    renderCatalogPreflight();
+}
+
+
 
 function renderMultiProductPicker() {
     if (!multiProductPicker) return;
@@ -1778,9 +1833,32 @@ function renderMultiProductPicker() {
         return;
     }
 
-    const sorted = [...products].sort((a, b) =>
+    const previousSelections = new Map(
+        [
+            ...document.querySelectorAll(
+                ".campaignRawVideoSelect"
+            ),
+        ].map(select => [
+            Number(select.dataset.productId),
+            select.value,
+        ])
+    );
+
+    const pickerProducts =
+        multiProductPickerProducts();
+
+    const sorted = [
+        ...pickerProducts.products,
+    ].sort((a, b) =>
         String(a.name || "").localeCompare(String(b.name || ""))
     );
+
+    const linkedCatalog =
+        state.b19aLinkedCatalog;
+
+    const filterLabel = linkedCatalog?.catalog_code
+        ? `Filter produk ${escapeHtml(linkedCatalog.catalog_code)}`
+        : "Filter berdasarkan catalog terpilih";
 
     multiProductPicker.innerHTML = `
         <div class="picker-head">
@@ -1788,27 +1866,43 @@ function renderMultiProductPicker() {
                 <strong>Produk dan Raw Video Real</strong>
                 <span>Pilih 5–6 produk, lalu pilih raw video real yang akan digabung menjadi catalog ads.</span>
             </div>
-            <button
-                type="button"
-                class="mini-button"
-                onclick="selectVisibleCampaignProducts()"
-            >
-                Pilih maksimal 6
-            </button>
+            <div class="picker-head-actions">
+                <label class="catalog-filter-toggle">
+                    <input
+                        type="checkbox"
+                        ${state.filterProductsBySelectedCatalog ? "checked" : ""}
+                        onchange="toggleCatalogProductFilter(this)"
+                    >
+                    <span>${filterLabel}</span>
+                </label>
+                <button
+                    type="button"
+                    class="mini-button"
+                    onclick="selectVisibleCampaignProducts()"
+                >
+                    Pilih maksimal 6
+                </button>
+            </div>
         </div>
         <div class="campaign-product-options">
-            ${sorted.map(product => {
+            ${sorted.length ? sorted.map(product => {
                 const image = product.primary_image_url || placeholderImage();
+                const productId = Number(product.id);
+                const checked =
+                    state.catalogProductOrder
+                        .map(Number)
+                        .includes(productId);
                 return `
                     <label
                         class="campaign-product-option"
-                        data-product-id="${Number(product.id)}"
+                        data-product-id="${productId}"
                     >
                         <input
                             type="checkbox"
                             class="campaignProductCheckbox"
-                            value="${Number(product.id)}"
+                            value="${productId}"
                             onchange="toggleCampaignProductRaw(this)"
+                            ${checked ? "checked" : ""}
                         >
                         <img
                             src="${escapeHtml(image)}"
@@ -1819,7 +1913,7 @@ function renderMultiProductPicker() {
                             <strong>${escapeHtml(product.name)}</strong>
                             <small
                                 class="campaignRawVideoStatus"
-                                data-product-id="${Number(product.id)}"
+                                data-product-id="${productId}"
                             >
                                 Pilih produk untuk memuat raw video
                             </small>
@@ -1827,12 +1921,12 @@ function renderMultiProductPicker() {
                         <div class="campaign-raw-tools">
                             <select
                                 class="campaignRawVideoSelect"
-                                data-product-id="${Number(product.id)}"
+                                data-product-id="${productId}"
                                 onclick="event.stopPropagation()"
                                 onmousedown="event.stopPropagation()"
                                 onchange="
                                     event.stopPropagation();
-                                    updateRawVideoSelectionStatus(${Number(product.id)});
+                                    updateRawVideoSelectionStatus(${productId});
                                     renderCatalogPreflight();
                                 "
                                 disabled
@@ -1842,11 +1936,11 @@ function renderMultiProductPicker() {
 
                             <div
                                 class="catalog-order-controls"
-                                data-order-product-id="${Number(product.id)}"
+                                data-order-product-id="${productId}"
                             >
                                 <span
                                     class="catalog-order-number"
-                                    data-order-number="${Number(product.id)}"
+                                    data-order-number="${productId}"
                                 >
                                     –
                                 </span>
@@ -1858,7 +1952,7 @@ function renderMultiProductPicker() {
                                         event.preventDefault();
                                         event.stopPropagation();
                                         moveCatalogProduct(
-                                            ${Number(product.id)},
+                                            ${productId},
                                             -1
                                         );
                                     "
@@ -1873,7 +1967,7 @@ function renderMultiProductPicker() {
                                         event.preventDefault();
                                         event.stopPropagation();
                                         moveCatalogProduct(
-                                            ${Number(product.id)},
+                                            ${productId},
                                             1
                                         );
                                     "
@@ -1884,9 +1978,28 @@ function renderMultiProductPicker() {
                         </div>
                     </label>
                 `;
-            }).join("")}
+            }).join("") : `
+                <div class="empty compact">
+                    Tidak ada produk yang cocok dengan catalog terpilih.
+                </div>
+            `}
         </div>
     `;
+
+    sorted.forEach(product => {
+        const productId = Number(product.id);
+        if (
+            state.catalogProductOrder
+                .map(Number)
+                .includes(productId)
+        ) {
+            populateRawVideoSelect(
+                productId,
+                previousSelections.get(productId)
+                || ""
+            );
+        }
+    });
 }
 
 
@@ -10616,6 +10729,7 @@ window.deleteCatalogMusic = deleteCatalogMusic;
 window.uploadCampaignVisualAsset = uploadCampaignVisualAsset;
 window.clearCampaignVisualAsset = clearCampaignVisualAsset;
 window.selectVisibleCampaignProducts = selectVisibleCampaignProducts;
+window.toggleCatalogProductFilter = toggleCatalogProductFilter;
 window.renderB13VariantPreview = renderB13VariantPreview;
 window.updateB13VariantCount = updateB13VariantCount;
 window.clearB13VariantMatrix = clearB13VariantMatrix;
