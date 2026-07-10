@@ -13,7 +13,9 @@ import textwrap
 import time
 import uuid
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
+from threading import Lock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -14245,6 +14247,15 @@ CONTENT_IMAGE_FINAL_SIZES = {
     "16:9": (1920, 1080),
 }
 
+CONTENT_IMAGE_JOBS: dict[str, dict[str, Any]] = {}
+CONTENT_IMAGE_JOB_LOCK = Lock()
+CONTENT_IMAGE_EXECUTOR = ThreadPoolExecutor(
+    max_workers=max(
+        1,
+        int(os.getenv("CONTENT_IMAGE_WORKERS", "1") or "1"),
+    )
+)
+
 
 def content_image_root() -> Path:
     root = STORAGE_ROOT / "content-images"
@@ -14531,16 +14542,16 @@ def generate_openai_content_images(
     return outputs
 
 
-@router.post("/api/content-images/generate")
-async def generate_content_images(
-    product_name: str = Form(...),
-    product_type: str = Form("keychain_clicker"),
-    scene: str = Form("toy_shelf"),
-    aspect_ratio: str = Form("4:5"),
-    prompt: str = Form(""),
-    count: int = Form(1),
-    raw_image: UploadFile = File(...),
-):
+def validate_content_image_request(
+    *,
+    product_name: str,
+    product_type: str,
+    aspect_ratio: str,
+    count: int,
+    raw_filename: str,
+    content_type: str,
+    raw_bytes: bytes,
+) -> tuple[str, str, int]:
     normalized_name = re.sub(r"\s+", " ", product_name or "").strip()
     if not normalized_name:
         raise HTTPException(status_code=400, detail="Nama produk wajib diisi")
@@ -14552,7 +14563,7 @@ async def generate_content_images(
         raise HTTPException(status_code=400, detail="Rasio tidak valid")
 
     count = max(1, min(4, int(count or 1)))
-    original_name = Path(raw_image.filename or "raw-image.png").name
+    original_name = Path(raw_filename or "raw-image.png").name
     extension = Path(original_name).suffix.lower()
     if extension not in {".jpg", ".jpeg", ".png", ".webp"}:
         raise HTTPException(
@@ -14560,17 +14571,30 @@ async def generate_content_images(
             detail="Raw image harus JPG, PNG, atau WEBP",
         )
 
-    content_type = str(raw_image.content_type or "").lower()
+    content_type = str(content_type or "").lower()
     if content_type and not content_type.startswith("image/"):
         raise HTTPException(status_code=415, detail="Raw image harus berupa image")
 
-    raw_bytes = await raw_image.read()
-    await raw_image.close()
     if not raw_bytes or len(raw_bytes) < 100:
         raise HTTPException(status_code=400, detail="Raw image kosong")
     if len(raw_bytes) > 20 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Raw image maksimal 20 MB")
 
+    return normalized_name, original_name, count
+
+
+def generate_content_images_response(
+    *,
+    normalized_name: str,
+    original_name: str,
+    product_type: str,
+    scene: str,
+    aspect_ratio: str,
+    prompt: str,
+    count: int,
+    raw_bytes: bytes,
+    content_type: str,
+) -> dict[str, Any]:
     final_prompt = content_image_prompt(
         product_name=normalized_name,
         product_type=product_type,
@@ -14580,30 +14604,24 @@ async def generate_content_images(
     )
     preserve_mask = build_product_preserve_mask(raw_bytes)
 
-    try:
-        generated_images = generate_openai_content_images(
-            raw_image=raw_bytes,
-            filename=original_name,
-            content_type=content_type or "image/png",
-            prompt=final_prompt,
-            size=CONTENT_IMAGE_SIZES[aspect_ratio],
-            count=count,
-            preserve_mask=preserve_mask,
+    generated_images = generate_openai_content_images(
+        raw_image=raw_bytes,
+        filename=original_name,
+        content_type=content_type or "image/png",
+        prompt=final_prompt,
+        size=CONTENT_IMAGE_SIZES[aspect_ratio],
+        count=count,
+        preserve_mask=preserve_mask,
+    )
+    safe_stem = re.sub(r"[^a-z0-9]+", "-", normalized_name.lower()).strip("-") or "content"
+    images = [
+        save_content_image(
+            image_bytes,
+            stem=safe_stem,
+            aspect_ratio=aspect_ratio,
         )
-        safe_stem = re.sub(r"[^a-z0-9]+", "-", normalized_name.lower()).strip("-") or "content"
-        images = [
-            save_content_image(
-                image_bytes,
-                stem=safe_stem,
-                aspect_ratio=aspect_ratio,
-            )
-            for image_bytes in generated_images
-        ]
-    except Exception as error:
-        raise HTTPException(
-            status_code=502,
-            detail=str(error)[-1200:],
-        ) from error
+        for image_bytes in generated_images
+    ]
 
     return {
         "ok": True,
@@ -14612,6 +14630,170 @@ async def generate_content_images(
         "prompt": final_prompt,
         "images": images,
     }
+
+
+def set_content_image_job(job_id: str, **updates: Any) -> None:
+    with CONTENT_IMAGE_JOB_LOCK:
+        job = CONTENT_IMAGE_JOBS.setdefault(job_id, {})
+        job.update(updates)
+        job["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+
+def run_content_image_job(
+    job_id: str,
+    *,
+    normalized_name: str,
+    original_name: str,
+    product_type: str,
+    scene: str,
+    aspect_ratio: str,
+    prompt: str,
+    count: int,
+    raw_bytes: bytes,
+    content_type: str,
+) -> None:
+    set_content_image_job(
+        job_id,
+        status="running",
+        message="Sedang generate image dengan OpenAI...",
+        progress=25,
+    )
+    try:
+        result = generate_content_images_response(
+            normalized_name=normalized_name,
+            original_name=original_name,
+            product_type=product_type,
+            scene=scene,
+            aspect_ratio=aspect_ratio,
+            prompt=prompt,
+            count=count,
+            raw_bytes=raw_bytes,
+            content_type=content_type,
+        )
+        set_content_image_job(
+            job_id,
+            status="completed",
+            message="Image selesai dibuat",
+            progress=100,
+            result=result,
+        )
+    except Exception as error:
+        set_content_image_job(
+            job_id,
+            status="failed",
+            message=str(error)[-1200:],
+            progress=100,
+        )
+
+
+@router.post("/api/content-images/jobs")
+async def create_content_image_job(
+    product_name: str = Form(...),
+    product_type: str = Form("keychain_clicker"),
+    scene: str = Form("toy_shelf"),
+    aspect_ratio: str = Form("4:5"),
+    prompt: str = Form(""),
+    count: int = Form(1),
+    raw_image: UploadFile = File(...),
+):
+    raw_bytes = await raw_image.read()
+    original_content_type = str(raw_image.content_type or "").lower()
+    original_name = Path(raw_image.filename or "raw-image.png").name
+    await raw_image.close()
+
+    normalized_name, original_name, count = validate_content_image_request(
+        product_name=product_name,
+        product_type=product_type,
+        aspect_ratio=aspect_ratio,
+        count=count,
+        raw_filename=original_name,
+        content_type=original_content_type,
+        raw_bytes=raw_bytes,
+    )
+
+    job_id = uuid.uuid4().hex
+    set_content_image_job(
+        job_id,
+        id=job_id,
+        status="queued",
+        message="Job masuk antrean generate image",
+        progress=5,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    CONTENT_IMAGE_EXECUTOR.submit(
+        run_content_image_job,
+        job_id,
+        normalized_name=normalized_name,
+        original_name=original_name,
+        product_type=product_type,
+        scene=scene,
+        aspect_ratio=aspect_ratio,
+        prompt=prompt or "",
+        count=count,
+        raw_bytes=raw_bytes,
+        content_type=original_content_type or "image/png",
+    )
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "status": "queued",
+        "message": "Generate berjalan di background",
+    }
+
+
+@router.get("/api/content-images/jobs/{job_id}")
+def get_content_image_job(job_id: str):
+    with CONTENT_IMAGE_JOB_LOCK:
+        job = dict(CONTENT_IMAGE_JOBS.get(job_id) or {})
+    if not job:
+        raise HTTPException(status_code=404, detail="Job tidak ditemukan")
+    return {
+        "ok": True,
+        **job,
+    }
+
+
+@router.post("/api/content-images/generate")
+async def generate_content_images(
+    product_name: str = Form(...),
+    product_type: str = Form("keychain_clicker"),
+    scene: str = Form("toy_shelf"),
+    aspect_ratio: str = Form("4:5"),
+    prompt: str = Form(""),
+    count: int = Form(1),
+    raw_image: UploadFile = File(...),
+):
+    raw_bytes = await raw_image.read()
+    original_content_type = str(raw_image.content_type or "").lower()
+    original_name = Path(raw_image.filename or "raw-image.png").name
+    await raw_image.close()
+
+    normalized_name, original_name, count = validate_content_image_request(
+        product_name=product_name,
+        product_type=product_type,
+        aspect_ratio=aspect_ratio,
+        count=count,
+        raw_filename=original_name,
+        content_type=original_content_type,
+        raw_bytes=raw_bytes,
+    )
+    try:
+        return generate_content_images_response(
+            normalized_name=normalized_name,
+            original_name=original_name,
+            product_type=product_type,
+            scene=scene,
+            aspect_ratio=aspect_ratio,
+            prompt=prompt or "",
+            count=count,
+            raw_bytes=raw_bytes,
+            content_type=original_content_type or "image/png",
+        )
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail=str(error)[-1200:],
+        ) from error
 
 
 @router.get("/api/voiceover/status")

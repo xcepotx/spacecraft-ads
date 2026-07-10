@@ -5262,6 +5262,59 @@ function renderContentImageCard(image) {
 }
 
 
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+
+function renderContentImageResult(data) {
+    const images = data.images || [];
+    contentImageResults.innerHTML = images.length
+        ? `
+            <div class="content-image-result-heading">
+                <div>
+                    <strong>${images.length} image selesai dibuat</strong>
+                    <span>${escapeHtml(data.model || "")}</span>
+                </div>
+            </div>
+            <div class="content-image-grid">
+                ${images.map(renderContentImageCard).join("")}
+            </div>
+        `
+        : `<div class="empty">Belum ada image yang dibuat.</div>`;
+}
+
+
+async function pollContentImageJob(jobId) {
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+        const job = await api(
+            `/api/content-images/jobs/${encodeURIComponent(jobId)}`
+        );
+        const progress = Number(job.progress || 0);
+        const message = job.message || "Generate berjalan...";
+        contentImageStatus.textContent =
+            `${message} ${progress ? `(${progress}%)` : ""}`;
+
+        if (job.status === "completed") {
+            renderContentImageResult(job.result || {});
+            contentImageStatus.textContent =
+                "Selesai. Output sudah dikompres ke WebP dan siap dipakai.";
+            return;
+        }
+
+        if (job.status === "failed") {
+            throw new Error(job.message || "Generate gagal");
+        }
+
+        await sleep(2500);
+    }
+
+    throw new Error(
+        "Generate masih berjalan terlalu lama. Coba cek lagi beberapa saat."
+    );
+}
+
+
 async function generateContentImage(event) {
     event.preventDefault();
 
@@ -5331,30 +5384,16 @@ async function generateContentImage(event) {
 
     try {
         const data = await api(
-            "/api/content-images/generate",
+            "/api/content-images/jobs",
             {
                 method: "POST",
                 body: formData,
             }
         );
 
-        const images = data.images || [];
-        contentImageResults.innerHTML = images.length
-            ? `
-                <div class="content-image-result-heading">
-                    <div>
-                        <strong>${images.length} image selesai dibuat</strong>
-                        <span>${escapeHtml(data.model || "")}</span>
-                    </div>
-                </div>
-                <div class="content-image-grid">
-                    ${images.map(renderContentImageCard).join("")}
-                </div>
-            `
-            : `<div class="empty">Belum ada image yang dibuat.</div>`;
-
         contentImageStatus.textContent =
-            `Selesai. Output sudah dikompres ke WebP dan siap dipakai.`;
+            "Generate sudah masuk antrean. Menunggu hasil...";
+        await pollContentImageJob(data.job_id);
 
     } catch (error) {
         contentImageStatus.textContent =
