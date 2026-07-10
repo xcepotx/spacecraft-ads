@@ -7680,3 +7680,156 @@ canvas,
         flex-direction: column;
     }
 }
+
+/* Mobile shell repair: prevent desktop grids from creating horizontal scroll. */
+@media (max-width: 760px) {
+    html,
+    body {
+        max-width: 100%;
+        overflow-x: hidden;
+    }
+
+    body {
+        background-size: auto;
+    }
+
+    .topbar {
+        align-items: flex-start !important;
+        display: grid !important;
+        grid-template-columns: 1fr !important;
+        gap: 12px !important;
+        padding: 12px !important;
+        width: 100% !important;
+        max-width: 100vw !important;
+        box-sizing: border-box !important;
+    }
+
+    .topbar > div:first-child {
+        min-width: 0;
+        width: 100%;
+    }
+
+    .topbar h1 {
+        font-size: 22px !important;
+        line-height: 1.12 !important;
+        max-width: 170px;
+    }
+
+    .topbar p {
+        max-width: 180px;
+        line-height: 1.25 !important;
+    }
+
+    .topbar-actions {
+        align-items: stretch !important;
+        display: grid !important;
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        gap: 8px !important;
+        width: 100% !important;
+    }
+
+    .topbar-actions .button,
+    .topbar-actions button,
+    .topbar-actions a {
+        justify-content: center !important;
+        min-width: 0 !important;
+        width: 100% !important;
+        white-space: normal !important;
+    }
+
+    .page {
+        box-sizing: border-box !important;
+        max-width: 100vw !important;
+        overflow-x: hidden !important;
+        padding: 12px !important;
+        width: 100% !important;
+    }
+
+    .hero,
+    .panel,
+    .multi-product-panel,
+    .product-library-header,
+    .automation-panel {
+        box-sizing: border-box !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        overflow: hidden !important;
+        width: 100% !important;
+    }
+
+    .hero {
+        grid-template-columns: 1fr !important;
+        padding: 16px !important;
+    }
+
+    .hero h2,
+    .product-library-header h2 {
+        font-size: 26px !important;
+        line-height: 1.14 !important;
+        overflow-wrap: anywhere;
+    }
+
+    .hero p,
+    .product-library-header p {
+        font-size: 13px !important;
+        line-height: 1.45 !important;
+        overflow-wrap: anywhere;
+    }
+
+    .campaign-visual-assets {
+        grid-template-columns: 1fr !important;
+        gap: 12px !important;
+        width: 100% !important;
+    }
+
+    .campaign-visual-card {
+        box-sizing: border-box !important;
+        min-width: 0 !important;
+        width: 100% !important;
+    }
+
+    .campaign-visual-card input[type="file"] {
+        box-sizing: border-box !important;
+        max-width: 100% !important;
+        width: 100% !important;
+    }
+
+    .campaign-visual-actions,
+    .raw-video-upload-actions,
+    .multi-product-actions,
+    .automation-create-actions {
+        display: grid !important;
+        grid-template-columns: 1fr !important;
+        width: 100% !important;
+    }
+
+    .campaign-visual-actions .mini-button,
+    .raw-video-upload-actions .mini-button,
+    .multi-product-actions .button,
+    .automation-create-actions .button {
+        min-width: 0 !important;
+        width: 100% !important;
+    }
+
+    textarea,
+    input,
+    select {
+        box-sizing: border-box !important;
+        max-width: 100% !important;
+    }
+}
+
+@media (max-width: 420px) {
+    .topbar-actions {
+        grid-template-columns: 1fr 1fr !important;
+    }
+
+    .topbar-actions .button,
+    .topbar-actions button,
+    .topbar-actions a {
+        min-height: 52px !important;
+        padding: 8px 10px !important;
+        font-size: 12px !important;
+        line-height: 1.15 !important;
+    }
+}
