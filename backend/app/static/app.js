@@ -3919,12 +3919,19 @@ function renderWorkspace(data) {
                         .join("")}
 
                     ${assets
+                        .filter(asset => ![
+                            "image",
+                            "video",
+                        ].includes(asset.asset_type))
                         .map(uploadedAssetCard)
                         .join("")}
 
                     ${
                         !sourceMedia.length
-                        && !assets.length
+                        && !assets.filter(asset => ![
+                            "image",
+                            "video",
+                        ].includes(asset.asset_type)).length
                         ? `
                             <div class="empty">
                                 Belum ada asset.
@@ -3938,10 +3945,10 @@ function renderWorkspace(data) {
             <section class="panel full raw-video-library-panel">
                 <div class="raw-video-library-head">
                     <div>
-                        <h3>Raw Product Videos</h3>
+                        <h3>Asset Image / Video Ads</h3>
                         <p>
-                            Upload video produk asli untuk digunakan
-                            pada Catalog Ads.
+                            Pilih image/video yang boleh muncul
+                            di dropdown Catalog Ads.
                         </p>
                     </div>
 
@@ -4478,58 +4485,6 @@ async function saveRawVideoSettings(
     }
 
     try {
-        const typeInput =
-            document.getElementById(
-                `rawVideoType-${assetId}`
-            );
-        const fitInput =
-            document.getElementById(
-                `rawVideoFitMode-${assetId}`
-            );
-        const primaryInput =
-            document.getElementById(
-                `rawVideoPrimary-${assetId}`
-            );
-        const trimStartInput =
-            document.getElementById(
-                `rawVideoTrimStart-${assetId}`
-            );
-        const trimEndInput =
-            document.getElementById(
-                `rawVideoTrimEnd-${assetId}`
-            );
-        const trimStartValue =
-            Number.parseFloat(
-                trimStartInput?.value
-            );
-        const trimEndRaw =
-            trimEndInput?.value?.trim();
-        const trimEndValue =
-            trimEndRaw
-                ? Number.parseFloat(trimEndRaw)
-                : null;
-        const payload = {
-            video_type:
-                typeInput?.value || "lifestyle",
-            fit_mode:
-                fitInput?.value || "cover",
-            is_primary:
-                Boolean(
-                    primaryInput
-                    && !primaryInput.disabled
-                    && primaryInput.checked
-                ),
-            ads_enabled: Boolean(enabled),
-            trim_start:
-                Number.isFinite(trimStartValue)
-                    ? Math.max(0, trimStartValue)
-                    : 0,
-            trim_end:
-                Number.isFinite(trimEndValue)
-                    ? Math.max(0, trimEndValue)
-                    : null,
-        };
-
         const data = await api(
             `/api/products/`
             + `${state.activeProductId}`
@@ -4583,6 +4538,58 @@ async function saveAssetAdsEnabled(
     }
 
     try {
+        const typeInput =
+            document.getElementById(
+                `rawVideoType-${assetId}`
+            );
+        const fitInput =
+            document.getElementById(
+                `rawVideoFitMode-${assetId}`
+            );
+        const primaryInput =
+            document.getElementById(
+                `rawVideoPrimary-${assetId}`
+            );
+        const trimStartInput =
+            document.getElementById(
+                `rawVideoTrimStart-${assetId}`
+            );
+        const trimEndInput =
+            document.getElementById(
+                `rawVideoTrimEnd-${assetId}`
+            );
+        const trimStartValue =
+            Number.parseFloat(
+                trimStartInput?.value
+            );
+        const trimEndRaw =
+            trimEndInput?.value?.trim();
+        const trimEndValue =
+            trimEndRaw
+                ? Number.parseFloat(trimEndRaw)
+                : null;
+        const payload = {
+            video_type:
+                typeInput?.value || "lifestyle",
+            fit_mode:
+                fitInput?.value || "cover",
+            is_primary:
+                Boolean(
+                    primaryInput
+                    && !primaryInput.disabled
+                    && primaryInput.checked
+                ),
+            ads_enabled: Boolean(enabled),
+            trim_start:
+                Number.isFinite(trimStartValue)
+                    ? Math.max(0, trimStartValue)
+                    : 0,
+            trim_end:
+                Number.isFinite(trimEndValue)
+                    ? Math.max(0, trimEndValue)
+                    : null,
+        };
+
         const data = await api(
             `/api/products/`
             + `${state.activeProductId}`
