@@ -14353,7 +14353,7 @@ def build_product_preserve_mask(raw_image: bytes) -> bytes:
         Image.Resampling.BILINEAR,
     )
     gray = ImageOps.grayscale(small)
-    edges = ImageFilter.FIND_EDGES.filter(gray)
+    edges = gray.filter(ImageFilter.FIND_EDGES)
     edges = ImageOps.autocontrast(edges)
     edge_mask = edges.point(lambda value: 255 if value > 22 else 0, mode="L")
 
