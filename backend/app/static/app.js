@@ -4523,6 +4523,10 @@ async function saveAssetAdsEnabled(
     assetId,
     enabled
 ) {
+    const checkbox =
+        document.getElementById(
+            `rawVideoAdsEnabled-${assetId}`
+        );
     const status =
         document.getElementById(
             `rawVideoSettingStatus-${assetId}`
@@ -4606,16 +4610,49 @@ async function saveAssetAdsEnabled(
 
         if (status) {
             status.textContent =
-                data.message;
+                data.message
+                || "Tersimpan. Dropdown Ads diperbarui.";
         }
+
+        const activeProductId =
+            state.activeProductId;
+        const activeSelect =
+            document.querySelector(
+                `.campaignRawVideoSelect[data-product-id="${activeProductId}"]`
+            );
+        const preferredClipId =
+            activeSelect && enabled
+                ? activeSelect.value
+                : "";
 
         clearRawVideoCache(state.activeProductId);
 
-        await openWorkspace(
-            state.activeProductId
-        );
+        if (activeSelect) {
+            await populateRawVideoSelect(
+                activeProductId,
+                preferredClipId
+            );
+        }
+
+        if (status) {
+            window.setTimeout(
+                () => {
+                    if (
+                        status.textContent === data.message
+                        || status.textContent === "Tersimpan. Dropdown Ads diperbarui."
+                    ) {
+                        status.textContent = "";
+                    }
+                },
+                2200
+            );
+        }
 
     } catch (error) {
+        if (checkbox) {
+            checkbox.checked = !enabled;
+        }
+
         if (status) {
             status.textContent =
                 `Gagal menyimpan filter Ads: ${error.message}`;
