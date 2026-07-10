@@ -4478,6 +4478,58 @@ async function saveRawVideoSettings(
     }
 
     try {
+        const typeInput =
+            document.getElementById(
+                `rawVideoType-${assetId}`
+            );
+        const fitInput =
+            document.getElementById(
+                `rawVideoFitMode-${assetId}`
+            );
+        const primaryInput =
+            document.getElementById(
+                `rawVideoPrimary-${assetId}`
+            );
+        const trimStartInput =
+            document.getElementById(
+                `rawVideoTrimStart-${assetId}`
+            );
+        const trimEndInput =
+            document.getElementById(
+                `rawVideoTrimEnd-${assetId}`
+            );
+        const trimStartValue =
+            Number.parseFloat(
+                trimStartInput?.value
+            );
+        const trimEndRaw =
+            trimEndInput?.value?.trim();
+        const trimEndValue =
+            trimEndRaw
+                ? Number.parseFloat(trimEndRaw)
+                : null;
+        const payload = {
+            video_type:
+                typeInput?.value || "lifestyle",
+            fit_mode:
+                fitInput?.value || "cover",
+            is_primary:
+                Boolean(
+                    primaryInput
+                    && !primaryInput.disabled
+                    && primaryInput.checked
+                ),
+            ads_enabled: Boolean(enabled),
+            trim_start:
+                Number.isFinite(trimStartValue)
+                    ? Math.max(0, trimStartValue)
+                    : 0,
+            trim_end:
+                Number.isFinite(trimEndValue)
+                    ? Math.max(0, trimEndValue)
+                    : null,
+        };
+
         const data = await api(
             `/api/products/`
             + `${state.activeProductId}`
@@ -4541,14 +4593,7 @@ async function saveAssetAdsEnabled(
                     "Content-Type":
                         "application/json",
                 },
-                body: JSON.stringify({
-                    video_type: "lifestyle",
-                    fit_mode: "cover",
-                    is_primary: false,
-                    ads_enabled: Boolean(enabled),
-                    trim_start: 0,
-                    trim_end: null,
-                }),
+                body: JSON.stringify(payload),
             }
         );
 
