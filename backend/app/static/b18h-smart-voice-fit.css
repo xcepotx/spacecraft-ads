@@ -1,0 +1,24 @@
+/* B18H_SMART_VOICE_TIMELINE_FIT_CSS */
+.voice-timeline-card .voice-duration-actions {
+    grid-template-columns: minmax(0, 1fr) !important;
+}
+
+.voice-fit-button {
+    background: linear-gradient(135deg, #f2a93b, #e78b24) !important;
+    border-color: transparent !important;
+    color: #fff !important;
+    box-shadow: 0 8px 18px rgba(231, 139, 36, .20);
+}
+
+.voice-fit-button:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 22px rgba(231, 139, 36, .27);
+}
+
+.voice-fit-button.hidden {
+    display: none !important;
+}
+
+.voice-duration-state.previewed {
+    color: #b86d12 !important;
+}

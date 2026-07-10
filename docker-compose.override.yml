@@ -1,0 +1,9 @@
+services:
+  app:
+    environment:
+      SPACECRAFT_BASE_URL: ${SPACECRAFT_BASE_URL}
+      SPACECRAFT_WABOT_KEY: ${SPACECRAFT_WABOT_KEY}
+  worker:
+    environment:
+      SPACECRAFT_BASE_URL: ${SPACECRAFT_BASE_URL}
+      SPACECRAFT_WABOT_KEY: ${SPACECRAFT_WABOT_KEY}

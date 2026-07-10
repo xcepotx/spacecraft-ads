@@ -12,8 +12,12 @@
 
     <link
         rel="stylesheet"
-        href="/static/app.css?v=workspace-polish-20260624-004251"
+        href="/static/app.css?v=campaign-history-table-20260705"
     >
+    <link rel="stylesheet" href="/static/b18c-unified-copy.css?v=20260625-093445">
+    <link rel="stylesheet" href="/static/b18c4-voice-studio.css?v=20260625-100832">
+    <link rel="stylesheet" href="/static/b18f-performance.css?v=20260625-104619">
+    <link rel="stylesheet" href="/static/b18h-smart-voice-fit.css?v=b18h-smart-fit">
 </head>
 
 <body>
@@ -107,6 +111,170 @@
             </div>
         </div>
 
+        <!-- B19A_CATALOG_SELECTOR_UI -->
+        <section
+            id="b19aCatalogRegistry"
+            class="b19a-catalog-registry"
+        >
+            <div class="b19a-catalog-heading">
+                <div>
+                    <span class="eyebrow">
+                        B19A LINKED CATALOG
+                    </span>
+                    <h3>
+                        SpaceCraft Mini Catalog
+                    </h3>
+                    <p>
+                        SpaceCraft menjadi master anggota
+                        catalog. Ads mengelola raw video,
+                        creative order, dan hasil render.
+                    </p>
+                </div>
+
+                <span
+                    id="b19aCatalogConnectionBadge"
+                    class="b19a-catalog-badge"
+                >
+                    Memuat...
+                </span>
+            </div>
+
+            <div class="b19a-catalog-controls">
+                <div class="field">
+                    <label>Sumber Creative Set</label>
+                    <select
+                        id="b19aCatalogSourceMode"
+                        onchange="b19aSetCatalogSourceMode()"
+                    >
+                        <option
+                            value="spacecraft"
+                            selected
+                        >
+                            SpaceCraft Mini Catalog
+                        </option>
+                        <option value="custom">
+                            Custom Creative Set
+                            (Internal)
+                        </option>
+                    </select>
+                </div>
+
+                <div
+                    id="b19aLinkedCatalogControls"
+                    class="b19a-linked-controls"
+                >
+                    <div class="field">
+                        <label>Mini Catalog</label>
+                        <select
+                            id="b19aCatalogSelect"
+                            onchange="b19aPreviewSelectedCatalog()"
+                        >
+                            <option value="">
+                                Memuat catalog...
+                            </option>
+                        </select>
+                    </div>
+
+                    <div class="field">
+                        <label>Harga & Link Untuk</label>
+                        <select
+                            id="b19aPricingSource"
+                            onchange="b19aSetPricingSource()"
+                        >
+                            <option value="meta" selected>
+                                Meta Ads / Paid Traffic
+                            </option>
+                            <option value="instagram">
+                                Instagram Organic
+                            </option>
+                            <option value="tiktok">
+                                TikTok Organic
+                            </option>
+                            <option value="direct">
+                                Direct / Website
+                            </option>
+                        </select>
+                    </div>
+
+                    <div class="b19a-catalog-actions">
+                        <button
+                            type="button"
+                            class="button secondary"
+                            onclick="syncB19aCatalogs()"
+                        >
+                            Refresh dari SpaceCraft
+                        </button>
+
+                        <button
+                            id="b19aApplyCatalogButton"
+                            type="button"
+                            class="button primary"
+                            onclick="b19aApplySelectedCatalog()"
+                        >
+                            Apply Catalog
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div
+                id="b19aCatalogStatus"
+                class="b19a-catalog-status"
+            >
+                Memuat cache Mini Catalog...
+            </div>
+
+            <div
+                id="b19aCatalogDetail"
+                class="b19a-catalog-detail"
+            ></div>
+        </section>
+
+        <!-- B19C_CREATIVE_SET_PANEL -->
+        <section
+            id="b19cCreativeSetPanel"
+            class="b19c-creative-set-panel is-empty"
+        >
+            <div>
+                <span class="eyebrow">
+                    B19C LINKED CREATIVE SET
+                </span>
+                <strong>
+                    Creative Set:
+                    <span id="b19cCreativeSetCode">
+                        Belum dibuat
+                    </span>
+                </strong>
+                <p>
+                    Creative Set menyimpan snapshot
+                    catalog, creative order, raw asset,
+                    dan status commerce.
+                </p>
+            </div>
+
+            <div
+                id="b19dDriftWarning"
+                class="b19d-drift-warning"
+                hidden
+            ></div>
+
+            <div class="b19c-status-group">
+                <span
+                    id="b19cCreativeSetStatus"
+                    class="b19c-status is-neutral"
+                >
+                    Draft
+                </span>
+
+                <span
+                    id="b19cCommerceStatus"
+                    class="b19c-status is-locked"
+                >
+                    Commerce belum linked
+                </span>
+            </div>
+        </section>
+
         <section class="creative-template-panel">
             <div class="creative-template-copy">
                 <span class="eyebrow">
@@ -181,6 +349,191 @@
             id="creativeTemplateNotice"
             class="creative-template-notice"
         ></div>
+
+        <section class="b13-variant-panel">
+            <div class="b13-variant-head">
+                <div>
+                    <span class="eyebrow">
+                        B13 AUTO VARIANT GENERATOR
+                    </span>
+
+                    <strong>
+                        Buat matrix A/B testing
+                    </strong>
+
+                    <p>
+                        Kombinasikan hook, CTA, promo,
+                        urutan produk, dan voice-over.
+                        Preview terlebih dahulu sebelum
+                        masuk antrean render.
+                    </p>
+                </div>
+
+                <div class="b13-limit-field">
+                    <label>
+                        Maksimal Variant
+                    </label>
+
+                    <input
+                        id="b13MaxVariants"
+                        type="number"
+                        min="1"
+                        max="24"
+                        value="12"
+                    >
+                </div>
+            </div>
+
+            <div class="b13-variant-input-grid">
+                <label>
+                    <span>
+                        Hook Variants
+                    </span>
+
+                    <textarea
+                        id="b13HookVariants"
+                        rows="4"
+                        placeholder="Satu hook per baris&#10;Contoh: Jangan beli sebelum lihat ini!&#10;Produk kecil yang bikin nagih"
+                    ></textarea>
+                    <!-- B18C1_UNIFIED_UI_START -->
+                    <div class="b18c1-inline-action">
+                        <button
+                            id="b18c1GenerateHookButton"
+                            type="button"
+                            class="button secondary b18c1-ai-button"
+                            onclick="generateB18C1Copy('hook')"
+                        >
+                            Generate 3 Hook dengan AI
+                        </button>
+                    </div>
+                </label>
+
+                <label>
+                    <span>
+                        CTA Variants
+                    </span>
+
+                    <textarea
+                        id="b13CtaVariants"
+                        rows="4"
+                        placeholder="Satu CTA per baris&#10;Pesan sekarang via WhatsApp&#10;Klik untuk cek stok"
+                    ></textarea>
+                    <div class="b18c1-inline-action">
+                        <button
+                            id="b18c1GenerateCtaButton"
+                            type="button"
+                            class="button secondary b18c1-ai-button"
+                            onclick="generateB18C1Copy('cta')"
+                        >
+                            Generate 3 CTA dengan AI
+                        </button>
+                    </div>
+                </label>
+
+                <label>
+                    <span>
+                        Promo Variants
+                    </span>
+
+                    <textarea
+                        id="b13PromoVariants"
+                        rows="4"
+                        placeholder="Satu promo per baris&#10;Diskon khusus hari ini&#10;Bundle lebih hemat"
+                    ></textarea>
+                </label>
+
+                <label>
+                    <span>
+                        Voice-over Variants
+                    </span>
+
+                    <textarea
+                        id="b13VoiceVariants"
+                        rows="4"
+                        placeholder="Opsional. Satu script per baris. Kosongkan untuk memakai voice-over otomatis."
+                    ></textarea>
+                </label>
+            </div>
+
+            <div class="b18c1-unified-toolbar">
+                <button
+                    id="b18c1GenerateBothButton"
+                    type="button"
+                    class="button primary"
+                    onclick="generateB18C1Copy('both')"
+                >
+                    Generate Hook + CTA dengan AI
+                </button>
+
+                <div class="b18c1-unified-feedback">
+                    <span id="b18c1OpenAIStatus" class="b18c1-status pending">
+                        Memeriksa OpenAI...
+                    </span>
+                    <span id="b18c1Message" class="b18c1-message"></span>
+                </div>
+            </div>
+            <!-- B18C1_UNIFIED_UI_END -->
+
+            <div class="b13-order-options">
+                <strong>
+                    Product Order Variants
+                </strong>
+
+                <label>
+                    <input
+                        id="b13OrderReverse"
+                        type="checkbox"
+                    >
+                    Tambahkan urutan terbalik
+                </label>
+
+                <label>
+                    <input
+                        id="b13OrderRotate"
+                        type="checkbox"
+                    >
+                    Tambahkan rotasi produk
+                </label>
+            </div>
+
+            <div class="b13-variant-actions">
+                <button
+                    type="button"
+                    class="button primary"
+                    onclick="renderB13VariantPreview()"
+                >
+                    Buat Preview Matrix
+                </button>
+
+                <button
+                    type="button"
+                    class="button secondary"
+                    onclick="clearB13VariantMatrix()"
+                >
+                    Reset Matrix
+                </button>
+
+                <span id="b13SelectedCount">
+                    0 variant dipilih
+                </span>
+            </div>
+
+            <div
+                id="b13VariantSummary"
+                class="b13-variant-summary"
+            >
+                Mode variasi standar aktif.
+            </div>
+
+            <div
+                id="b13VariantPreview"
+                class="b13-variant-preview"
+            >
+                <div class="b13-empty">
+                    Belum ada variant matrix.
+                </div>
+            </div>
+        </section>
 
         <div class="multi-product-controls">
             <div class="field">
@@ -272,7 +625,7 @@
 
         </div>
 
-        <div class="multi-promo-panel">
+                <div class="multi-promo-panel">
             <div class="field">
                 <label class="voiceover-toggle">
                     <input
@@ -326,52 +679,216 @@
             </div>
         </div>
 
-        <div class="multi-voice-panel">
-            <div class="field">
-                <label class="voiceover-toggle">
-                    <input
-                        id="multiCampaignVoiceoverEnabled"
-                        type="checkbox"
-                        onchange="toggleMultiVoiceoverControls()"
+        <!-- B18C4_PROFESSIONAL_VOICE_STUDIO_UI -->
+        <section class="multi-voice-panel voice-studio-panel">
+            <header class="voice-studio-header">
+                <div class="voice-studio-heading">
+                    <div class="voice-studio-kicker">VOICE-OVER STUDIO</div>
+                    <label class="voice-studio-toggle voiceover-toggle">
+                        <input
+                            id="multiCampaignVoiceoverEnabled"
+                            type="checkbox"
+                            onchange="toggleMultiVoiceoverControls()"
+                        >
+                        <span>Aktifkan Voice Over</span>
+                    </label>
+                    <p>
+                        Buat, dengarkan, dan setujui narasi sebelum video dirender.
+                        Sistem menjaga nama produk dan memeriksa kecukupan durasi.
+                    </p>
+                </div>
+
+                <div class="voice-studio-voice-field field">
+                    <label for="multiCampaignVoiceId">Voice ElevenLabs</label>
+                    <select
+                        id="multiCampaignVoiceId"
+                        onchange="rememberVoiceSelection()"
+                        disabled
                     >
-                    Voice Over
-                </label>
-                <select
-                    id="multiCampaignVoiceId"
-                    onchange="rememberVoiceSelection()"
-                    disabled
-                >
-                    <option value="">Memuat daftar voice...</option>
-                </select>
-            </div>
+                        <option value="">Memuat daftar voice...</option>
+                    </select>
+                </div>
+            </header>
 
             <div
                 id="multiVoiceoverControls"
-                class="field voiceover-controls voiceover-disabled"
+                class="voice-studio-guidance voiceover-controls voiceover-disabled"
             >
-                <label>Mode VO</label>
                 <select
                     id="multiCampaignVoiceMode"
-                    onchange="toggleMultiCustomVoiceText()"
+                    class="hidden"
                     disabled
                 >
-                    <option value="auto">Auto script</option>
-                    <option value="custom">Custom script</option>
+                    <option value="custom" selected>Draft disetujui</option>
                 </select>
+
+                <div class="voice-studio-guidance-icon" aria-hidden="true">&#10003;</div>
+                <p class="voice-draft-help">
+                    Nama produk dipertahankan persis dari katalog.
+                    Angka, rupiah, dan persen dinormalisasi agar dibaca jelas.
+                    Render hanya dapat dilanjutkan setelah preview muat dalam timeline
+                    dan draft disetujui.
+                </p>
             </div>
 
             <div
                 id="multiCustomVoiceTextWrap"
-                class="field custom-voice-text hidden"
+                class="custom-voice-text hidden voice-draft-panel voice-studio-workspace"
             >
-                <label>Custom VO</label>
-                <textarea
-                    id="multiCampaignVoiceText"
-                    rows="3"
-                    placeholder="Isi naskah voice-over khusus untuk raw video catalog"
-                ></textarea>
+                <section class="voice-editor-card">
+                    <div class="voice-draft-title-row voice-editor-heading">
+                        <div>
+                            <div class="voice-studio-step">LANGKAH 1–3</div>
+                            <label for="multiCampaignVoiceText">
+                                Draft narasi
+                            </label>
+                            <p>
+                                Generate draft, edit bila diperlukan, lalu dengarkan preview.
+                            </p>
+                        </div>
+
+                        <span
+                            id="multiVoiceDraftStatus"
+                            class="voice-draft-status pending"
+                        >
+                            Belum dibuat
+                        </span>
+                    </div>
+
+                    <textarea
+                        id="multiCampaignVoiceText"
+                        rows="8"
+                        maxlength="2000"
+                        oninput="invalidateMultiVoiceDraft()"
+                        placeholder="Klik Generate Draft. Teks di sini akan dibaca oleh ElevenLabs."
+                    ></textarea>
+
+                    <div class="voice-draft-actions voice-editor-actions">
+                        <button
+                            id="multiVoiceDraftGenerateButton"
+                            type="button"
+                            class="button secondary"
+                            onclick="generateMultiVoiceDraft()"
+                        >
+                            <span class="voice-action-number">1</span>
+                            Generate Draft
+                        </button>
+
+                        <button
+                            id="multiVoiceDraftPreviewButton"
+                            type="button"
+                            class="button secondary"
+                            onclick="previewMultiVoiceDraft()"
+                        >
+                            <span class="voice-action-number">2</span>
+                            Preview Voice
+                        </button>
+
+                        <button
+                            id="multiVoiceDraftApproveButton"
+                            type="button"
+                            class="button primary"
+                            onclick="approveMultiVoiceDraft()"
+                        >
+                            <span class="voice-action-number">3</span>
+                            Approve Draft
+                        </button>
+                    </div>
+
+                    <audio
+                        id="multiVoiceDraftPlayer"
+                        class="hidden voice-draft-player"
+                        controls
+                        preload="none"
+                    ></audio>
+
+                    <div class="voice-editor-feedback">
+                        <p
+                            id="multiVoiceDraftMessage"
+                            class="voice-draft-message"
+                        >
+                            Generate, dengarkan preview, lalu approve sebelum render.
+                        </p>
+
+                        <div
+                            id="multiVoiceProtectedTerms"
+                            class="voice-protected-terms"
+                        ></div>
+                    </div>
+                </section>
+
+                <!-- B18D_DURATION_PREFLIGHT_UI -->
+                <aside
+                    id="multiVoiceDurationPanel"
+                    class="voice-duration-panel voice-timeline-card"
+                >
+                    <div class="voice-timeline-heading">
+                        <div>
+                            <div class="voice-studio-step">TIMELINE CHECK</div>
+                            <strong>Kesiapan voice-over</strong>
+                        </div>
+                        <span class="voice-timeline-badge">Closing 5 detik</span>
+                    </div>
+
+                    <div class="voice-duration-metrics">
+                        <div>
+                            <span>Durasi VO</span>
+                            <strong id="multiVoiceDurationActual">-</strong>
+                        </div>
+                        <div>
+                            <span>Slot maksimum</span>
+                            <strong id="multiVoiceDurationLimit">-</strong>
+                        </div>
+                        <div>
+                            <span>Closing</span>
+                            <strong>5 detik</strong>
+                        </div>
+                        <div>
+                            <span>Status</span>
+                            <strong
+                                id="multiVoiceDurationState"
+                                class="voice-duration-state pending"
+                            >
+                                Belum preview
+                            </strong>
+                        </div>
+                    </div>
+
+                    <div class="voice-timeline-note">
+                        Voice-over harus selesai sebelum scene closing dimulai.
+                    </div>
+
+                    <div class="voice-duration-actions">
+                        <button
+                            id="multiVoiceFitButton"
+                            type="button"
+                            class="button primary hidden voice-fit-button"
+                            onclick="fitMultiVoiceToTimeline()"
+                        >
+                            Sesuaikan ke Timeline
+                        </button>
+
+                        <button
+                            id="multiVoiceCompactButton"
+                            type="button"
+                            class="button secondary"
+                            onclick="compactMultiVoiceDraft()"
+                        >
+                            Ringkas Otomatis
+                        </button>
+
+                        <button
+                            id="multiVoiceExtendButton"
+                            type="button"
+                            class="button secondary"
+                            onclick="extendMultiVoiceDuration()"
+                        >
+                            Perpanjang Durasi
+                        </button>
+                    </div>
+                </aside>
             </div>
-        </div>
+        </section>
 
         <section class="multi-music-panel">
             <div class="music-panel-heading">
@@ -647,6 +1164,144 @@
             </div>
         </section>
 
+        <section
+            id="singleProductCampaign"
+            class="single-product-campaign"
+        >
+            <div class="single-product-head">
+                <div>
+                    <span class="eyebrow">
+                        SINGLE PRODUCT CAMPAIGN
+                    </span>
+                    <h3>
+                        1 raw video + image produk
+                    </h3>
+                    <p>
+                        Untuk custom keycap, Dino Chibi,
+                        atau campaign satu paket tanpa
+                        syarat 5 produk.
+                    </p>
+                </div>
+
+                <span class="single-product-badge">
+                    MVP
+                </span>
+            </div>
+
+            <div class="single-product-grid">
+                <div class="field">
+                    <label>Produk</label>
+                    <select id="singleProductSelect">
+                        <option value="">
+                            Memuat produk...
+                        </option>
+                    </select>
+                </div>
+
+                <div class="field">
+                    <label>Raw Video</label>
+                    <select id="singleProductRawVideoSelect">
+                        <option value="">
+                            Pilih produk dulu
+                        </option>
+                    </select>
+                </div>
+
+                <div class="field">
+                    <label>Durasi</label>
+                    <select id="singleProductDuration">
+                        <option value="15">
+                            15 detik
+                        </option>
+                        <option value="20" selected>
+                            20 detik
+                        </option>
+                        <option value="25">
+                            25 detik
+                        </option>
+                        <option value="30">
+                            30 detik
+                        </option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="single-product-grid two">
+                <div class="field">
+                    <label>Hook</label>
+                    <input
+                        id="singleProductHook"
+                        class="input"
+                        placeholder="Contoh: Custom keycap lucu buat tas kamu"
+                    >
+                </div>
+
+                <div class="field">
+                    <label>CTA</label>
+                    <input
+                        id="singleProductCta"
+                        class="input"
+                        placeholder="Contoh: Chat sekarang, pilih warna favoritmu"
+                    >
+                </div>
+            </div>
+
+            <div class="single-product-grid two">
+                <div class="field">
+                    <label class="voiceover-toggle">
+                        <input
+                            type="checkbox"
+                            id="singleProductVoiceoverEnabled"
+                        >
+                        Voice Over
+                    </label>
+                    <select id="singleProductVoiceId">
+                        <option value="">
+                            Memuat voice...
+                        </option>
+                    </select>
+                </div>
+
+                <div class="field">
+                    <label>Mode VO</label>
+                    <select id="singleProductVoiceMode">
+                        <option value="auto" selected>
+                            Auto script
+                        </option>
+                        <option value="custom">
+                            Custom script
+                        </option>
+                    </select>
+                </div>
+            </div>
+
+            <div
+                id="singleProductVoiceTextWrap"
+                class="field"
+                style="display:none;"
+            >
+                <label>Script VO Custom</label>
+                <textarea
+                    id="singleProductVoiceText"
+                    class="input"
+                    rows="3"
+                    placeholder="Contoh: Hook {hook}. Ini {product}, harga {price}. {cta}"
+                ></textarea>
+            </div>
+
+            <div class="single-product-actions">
+                <span id="singleProductMessage"></span>
+
+                <button
+                    id="singleProductGenerateButton"
+                    type="button"
+                    class="button primary"
+                >
+                    Render Single Product Video
+                </button>
+            </div>
+        </section>
+
         <div
             id="multiCampaignMessage"
             class="status"
@@ -712,6 +1367,9 @@
     </section>
 </div>
 
-<script src="/static/app.js?v=b10-auto-20260624-003433"></script>
+<script src="/static/app.js?v=campaign-history-table-20260705"></script>
+<script src="/static/b18b-campaign-history-v3.js?v=b18f-20260705-pageable-history"></script>
+<script src="/static/b18a-voice-draft-persistence.js?v=b18f-20260625-104619"></script>
+<script src="/static/b18c-unified-copy.js?v=20260625-093445"></script>
 </body>
 </html>

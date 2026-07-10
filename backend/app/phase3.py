@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import os
+import hashlib
 import re
 import base64
 import json
 import mimetypes
+import random
 import shutil
 import subprocess
 import textwrap
 import time
 import uuid
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -19,13 +22,31 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
 from redis import Redis
 from rq import Queue, Retry
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, func, select
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, delete, func, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.main import Base, Product, SessionLocal, engine, get_db
 from app.phase2 import ProductAnalysis, ProductAsset
 
 router = APIRouter()
+
+# B18K_PUBLISHED_PRODUCT_GUARD
+ADS_PUBLISHED_STATUS = "published"
+
+
+def ads_published_product_condition():
+    return (
+        func.lower(
+            func.trim(
+                func.coalesce(
+                    Product.status,
+                    "",
+                )
+            )
+        )
+        == ADS_PUBLISHED_STATUS
+    )
+
 
 STORAGE_ROOT = Path(os.getenv("STORAGE_PATH", "/app/storage"))
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
@@ -48,6 +69,18 @@ ELEVENLABS_LANGUAGE_CODE = os.getenv(
     "ELEVENLABS_LANGUAGE_CODE",
     "id",
 ).strip()
+
+# B18C_OPENAI_CONSTANTS_START
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+OPENAI_BASE_URL = os.getenv(
+    "OPENAI_BASE_URL",
+    "https://api.openai.com/v1",
+).strip().rstrip("/")
+OPENAI_COPY_MODEL = os.getenv(
+    "OPENAI_COPY_MODEL",
+    "gpt-5.4-mini",
+).strip()
+# B18C_OPENAI_CONSTANTS_END
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_BASE_URL = os.getenv(
@@ -107,6 +140,49 @@ AUTOMATION_DUE_SET = (
 AUTOMATION_LOG_KEY = (
     "product_ads:automation:logs"
 )
+
+
+PERFORMANCE_KEY_PREFIX = (
+    "product_ads:performance:"
+)
+
+PERFORMANCE_CAMPAIGN_SET_PREFIX = (
+    "product_ads:performance:campaign:"
+)
+
+
+WABOT_BASE_URL = os.getenv(
+    "WABOT_BASE_URL",
+    "",
+).strip().rstrip("/")
+
+WABOT_API_KEY = os.getenv(
+    "WABOT_API_KEY",
+    "",
+).strip()
+
+WABOT_CAMPAIGN_PREFIX = (
+    "product_ads:wabot:campaign:"
+)
+
+WABOT_EVENT_PREFIX = (
+    "product_ads:wabot:events:"
+)
+
+WABOT_EVENT_LIMIT = 500
+
+
+# B15 SPACECRAFT CATALOG SELECTOR
+SPACECRAFT_BASE_URL = os.getenv(
+    "SPACECRAFT_BASE_URL",
+    "https://spacecraft.id",
+).strip().rstrip("/")
+
+SPACECRAFT_WABOT_KEY = os.getenv(
+    "SPACECRAFT_WABOT_KEY",
+    "",
+).strip()
+
 
 
 
@@ -214,6 +290,381 @@ class RenderJob(Base):
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
+    )
+
+
+# B19A_CATALOG_CACHE_MODELS
+class SpacecraftCatalogCache(Base):
+    __tablename__ = "spacecraft_catalog_cache"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+    )
+
+    catalog_code: Mapped[str] = mapped_column(
+        String(50),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(300),
+        nullable=False,
+    )
+
+    slug: Mapped[str | None] = mapped_column(
+        String(300),
+        nullable=True,
+    )
+
+    headline: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
+    catalog_type: Mapped[str | None] = mapped_column(
+        String(80),
+        nullable=True,
+        index=True,
+    )
+
+    flow_type: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    source_code: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    campaign_name: Mapped[str | None] = mapped_column(
+        String(300),
+        nullable=True,
+    )
+
+    audience_label: Mapped[str | None] = mapped_column(
+        String(300),
+        nullable=True,
+    )
+
+    go_url: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        default="published",
+        index=True,
+    )
+
+    products_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+
+    catalog_hash: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        index=True,
+    )
+
+    source_synced_at: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=dict,
+    )
+
+    last_synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(
+            timezone.utc
+        ),
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(
+            timezone.utc
+        ),
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(
+            timezone.utc
+        ),
+    )
+
+
+class SpacecraftCatalogProductCache(Base):
+    __tablename__ = (
+        "spacecraft_catalog_product_cache"
+    )
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+    )
+
+    catalog_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "spacecraft_catalog_cache.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    external_product_id: Mapped[str] = (
+        mapped_column(
+            String(100),
+            nullable=False,
+            index=True,
+        )
+    )
+
+    local_product_id: Mapped[int | None] = (
+        mapped_column(
+            ForeignKey(
+                "products.id",
+                ondelete="SET NULL",
+            ),
+            nullable=True,
+            index=True,
+        )
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(500),
+        nullable=False,
+    )
+
+    slug: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        default="published",
+        index=True,
+    )
+
+    commerce_position: Mapped[int] = (
+        mapped_column(
+            Integer,
+            nullable=False,
+        )
+    )
+
+    bundle_quantity: Mapped[int] = (
+        mapped_column(
+            Integer,
+            nullable=False,
+            default=1,
+        )
+    )
+
+    is_primary: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+
+    catalog_label: Mapped[str | None] = (
+        mapped_column(
+            String(300),
+            nullable=True,
+        )
+    )
+
+    payload: Mapped[dict[str, Any]] = (
+        mapped_column(
+            JSON,
+            nullable=False,
+            default=dict,
+        )
+    )
+
+    created_at: Mapped[datetime] = (
+        mapped_column(
+            DateTime(timezone=True),
+            nullable=False,
+            default=lambda: datetime.now(
+                timezone.utc
+            ),
+        )
+    )
+
+    updated_at: Mapped[datetime] = (
+        mapped_column(
+            DateTime(timezone=True),
+            nullable=False,
+            default=lambda: datetime.now(
+                timezone.utc
+            ),
+        )
+    )
+
+
+# B19C_LINKED_CREATIVE_SET_MODEL
+class CreativeSet(Base):
+    __tablename__ = "creative_sets"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+    )
+
+    creative_set_code: Mapped[str] = mapped_column(
+        String(50),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    source_type: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        index=True,
+    )
+
+    catalog_code: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+        index=True,
+    )
+
+    catalog_hash: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        index=True,
+    )
+
+    catalog_name: Mapped[str | None] = mapped_column(
+        String(300),
+        nullable=True,
+    )
+
+    campaign_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "creative_campaigns.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(40),
+        nullable=False,
+        default="draft",
+        index=True,
+    )
+
+    commerce_ready: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        index=True,
+    )
+
+    product_ids: Mapped[list[int]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
+
+    commerce_product_ids: Mapped[list[int]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
+
+    creative_product_ids: Mapped[list[int]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
+
+    raw_asset_ids: Mapped[list[int]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
+
+    go_url: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=dict,
+    )
+
+    # B19D_CATALOG_DRIFT_MODEL
+    drift_status: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        default="current",
+        index=True,
+    )
+
+    current_catalog_hash: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        index=True,
+    )
+
+    drift_reason: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    drift_detected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    drift_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(
+            timezone.utc
+        ),
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(
+            timezone.utc
+        ),
     )
 
 
@@ -342,7 +793,129 @@ class RawCatalogClipSelection(BaseModel):
 
 
 
+class RawCatalogVariantRecipe(BaseModel):
+    label: str = Field(
+        min_length=1,
+        max_length=160,
+    )
+
+    hook: str | None = Field(
+        default=None,
+        max_length=500,
+    )
+
+    cta: str | None = Field(
+        default=None,
+        max_length=500,
+    )
+
+    promo_text: str | None = Field(
+        default=None,
+        max_length=240,
+    )
+
+    voiceover_text: str | None = Field(
+        default=None,
+        max_length=2000,
+    )
+
+    product_order: list[int] | None = Field(
+        default=None,
+        min_length=5,
+        max_length=6,
+    )
+
+    hook_code: str | None = Field(
+        default=None,
+        max_length=40,
+    )
+
+    cta_code: str | None = Field(
+        default=None,
+        max_length=40,
+    )
+
+    promo_code: str | None = Field(
+        default=None,
+        max_length=40,
+    )
+
+    order_code: str | None = Field(
+        default=None,
+        max_length=40,
+    )
+
+    voice_code: str | None = Field(
+        default=None,
+        max_length=40,
+    )
+
+    enabled: bool = True
+
+
+
+
+
+class CreativeSetPrepareRequest(BaseModel):
+    source_type: Literal[
+        "spacecraft",
+        "custom",
+    ]
+
+    catalog_code: str | None = Field(
+        default=None,
+        max_length=50,
+    )
+
+    catalog_hash: str | None = Field(
+        default=None,
+        min_length=64,
+        max_length=64,
+    )
+
+    name: str | None = Field(
+        default=None,
+        max_length=300,
+    )
+
+    product_ids: list[int] = Field(
+        default_factory=list,
+        min_length=1,
+        max_length=20,
+    )
+
+
 class RawVideoCatalogRequest(BaseModel):
+    # B19A_LINKED_CATALOG_REQUEST
+    catalog_source: Literal[
+        "spacecraft",
+        "custom",
+    ] = "custom"
+
+    catalog_code: str | None = Field(
+        default=None,
+        max_length=50,
+    )
+
+    catalog_hash: str | None = Field(
+        default=None,
+        min_length=64,
+        max_length=64,
+    )
+
+    pricing_source: Literal[
+        "meta",
+        "instagram",
+        "tiktok",
+        "direct",
+    ] = "meta"
+
+    # B19C_CREATIVE_SET_REQUEST_FIELDS
+    creative_set_code: str | None = Field(
+        default=None,
+        max_length=50,
+    )
+
     name: str | None = Field(
         default=None,
         max_length=300,
@@ -397,6 +970,16 @@ class RawVideoCatalogRequest(BaseModel):
         default=None,
         max_length=240,
     )
+    # B18C_RAW_COPY_FIELDS_START
+    hook: str | None = Field(
+        default=None,
+        max_length=180,
+    )
+    cta: str | None = Field(
+        default=None,
+        max_length=140,
+    )
+    # B18C_RAW_COPY_FIELDS_END
     product_clips: list[RawCatalogClipSelection] = Field(
         min_length=5,
         max_length=6,
@@ -424,6 +1007,29 @@ class RawVideoCatalogRequest(BaseModel):
         max_length=2000,
     )
 
+    approved_voice_asset_id: str | None = Field(
+        default=None,
+        min_length=32,
+        max_length=32,
+    )
+    approved_voice_fingerprint: str | None = Field(
+        default=None,
+        min_length=64,
+        max_length=64,
+    )
+    approved_voice_duration_seconds: float | None = Field(
+        default=None,
+        gt=0,
+        le=3600,
+    )
+
+    variant_recipes: list[
+        RawCatalogVariantRecipe
+    ] = Field(
+        default_factory=list,
+        max_length=24,
+    )
+
     @field_validator("duration_seconds")
     @classmethod
     def validate_duration(cls, value: int) -> int:
@@ -448,6 +1054,61 @@ class RawVideoCatalogRequest(BaseModel):
                 )
             product_ids.append(item.product_id)
 
+        return value
+
+
+class SingleProductVideoRequest(BaseModel):
+    product_id: int = Field(
+        ge=1,
+    )
+
+    name: str | None = Field(
+        default=None,
+        max_length=300,
+    )
+
+    raw_clip_id: str | None = Field(
+        default=None,
+        max_length=120,
+    )
+
+    duration_seconds: int = Field(default=20)
+    aspect_ratio: Literal["9:16", "1:1", "16:9"] = "9:16"
+
+    hook: str | None = Field(
+        default=None,
+        max_length=180,
+    )
+
+    cta: str | None = Field(
+        default=None,
+        max_length=140,
+    )
+
+    image_count: int = Field(
+        default=4,
+        ge=0,
+        le=6,
+    )
+
+    voiceover_enabled: bool = False
+    voice_id: str | None = Field(
+        default=None,
+        max_length=160,
+    )
+    voiceover_mode: Literal["auto", "custom"] = "auto"
+    voiceover_text: str | None = Field(
+        default=None,
+        max_length=700,
+    )
+
+    @field_validator("duration_seconds")
+    @classmethod
+    def validate_duration(cls, value: int) -> int:
+        if value not in {15, 20, 25, 30}:
+            raise ValueError(
+                "Durasi harus 15, 20, 25, atau 30 detik"
+            )
         return value
 
 
@@ -495,6 +1156,525 @@ class RawVideoAssetSettingsRequest(BaseModel):
         return round(float(value), 3)
 
 
+# B18D_DURATION_AWARE_VOICEOVER
+B18D_CLOSING_RESERVED_SECONDS = 5.0
+B18D_TIMELINE_BUFFER_SECONDS = 0.5
+
+
+def voiceover_max_seconds(
+    duration_seconds: int | float,
+    closing_reserved_seconds: float = B18D_CLOSING_RESERVED_SECONDS,
+) -> float:
+    return round(
+        max(
+            1.0,
+            float(duration_seconds)
+            - max(0.0, float(closing_reserved_seconds))
+            - B18D_TIMELINE_BUFFER_SECONDS,
+        ),
+        3,
+    )
+
+
+def compact_voice_product_alias(name: str) -> str:
+    value = str(name or '').strip()
+    if value.lower().startswith('sack of '):
+        value = value[8:].strip()
+    removable = {'articulated', 'fidget', 'keychain', 'new'}
+    words = [word for word in value.split() if word.lower() not in removable]
+    compact = ' '.join(words).strip()
+    return compact or str(name or '').strip()
+
+
+# B18G_APPROVED_VOICE_ASSET_REUSE
+B18G_APPROVED_VOICE_DIR = "voice-approved"
+B18G_PREVIEW_VOICE_DIR = "voice-previews"
+B18G_VOICE_SPEED = 1.0
+
+# B18H_SMART_VOICE_TIMELINE_FIT
+B18H_MAX_OVER_SECONDS = 1.20
+B18H_MAX_SPEED_MULTIPLIER = 1.06
+B18H_TARGET_MARGIN_SECONDS = 0.08
+B18H_SILENCE_THRESHOLD_DB = -48
+
+
+def voice_asset_fingerprint(
+    voice_id: str,
+    text: str,
+    model_id: str = ELEVENLABS_MODEL_ID,
+    language_code: str = ELEVENLABS_LANGUAGE_CODE,
+    output_format: str = ELEVENLABS_OUTPUT_FORMAT,
+    speed: float = B18G_VOICE_SPEED,
+) -> str:
+    payload = {
+        "voice_id": str(voice_id or "").strip(),
+        "text": str(text or "").strip(),
+        "model_id": str(model_id or "").strip(),
+        "language_code": str(language_code or "").strip(),
+        "output_format": str(output_format or "").strip(),
+        "speed": round(float(speed), 3),
+    }
+    serialized = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def validate_voice_asset_id(asset_id: str) -> str:
+    value = str(asset_id or "").strip().lower()
+    if not re.fullmatch(r"[a-f0-9]{32}", value):
+        raise RuntimeError("Voice asset ID tidak valid")
+    return value
+
+
+def voice_preview_audio_path(asset_id: str) -> Path:
+    value = validate_voice_asset_id(asset_id)
+    return STORAGE_ROOT / B18G_PREVIEW_VOICE_DIR / f"preview-{value}.mp3"
+
+
+def voice_preview_metadata_path(asset_id: str) -> Path:
+    value = validate_voice_asset_id(asset_id)
+    return STORAGE_ROOT / B18G_PREVIEW_VOICE_DIR / f"preview-{value}.json"
+
+
+def approved_voice_audio_path(asset_id: str) -> Path:
+    value = validate_voice_asset_id(asset_id)
+    return STORAGE_ROOT / B18G_APPROVED_VOICE_DIR / f"approved-{value}.mp3"
+
+
+def approved_voice_metadata_path(asset_id: str) -> Path:
+    value = validate_voice_asset_id(asset_id)
+    return STORAGE_ROOT / B18G_APPROVED_VOICE_DIR / f"approved-{value}.json"
+
+
+def write_voice_metadata(destination: Path, payload: dict[str, Any]) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    temporary.replace(destination)
+
+
+def read_voice_metadata(source: Path) -> dict[str, Any]:
+    if not source.is_file():
+        raise RuntimeError("Metadata voice asset tidak ditemukan")
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except Exception as error:
+        raise RuntimeError("Metadata voice asset tidak valid") from error
+    if not isinstance(payload, dict):
+        raise RuntimeError("Metadata voice asset harus berupa object")
+    return payload
+
+
+
+def _run_voice_fit_ffmpeg(
+    source: Path,
+    destination: Path,
+    audio_filter: str,
+) -> None:
+    destination.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(source),
+        "-vn",
+        "-af",
+        audio_filter,
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
+        "-c:a",
+        "libmp3lame",
+        "-b:a",
+        "128k",
+        str(destination),
+    ]
+
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            (result.stderr or "FFmpeg voice fit gagal")[-1800:]
+        )
+
+    if (
+        not destination.is_file()
+        or destination.stat().st_size < 1000
+    ):
+        raise RuntimeError(
+            "Output Smart Voice Fit tidak valid"
+        )
+
+
+def fit_voice_preview_asset(
+    asset_id: str,
+    voice_id: str,
+    text: str,
+    protected_terms: list[str],
+    target_duration_seconds: int,
+    closing_reserved_seconds: int,
+) -> dict[str, Any]:
+    source_id = validate_voice_asset_id(asset_id)
+    source_audio = voice_preview_audio_path(source_id)
+    source_metadata_path = voice_preview_metadata_path(source_id)
+
+    if (
+        not source_audio.is_file()
+        or source_audio.stat().st_size < 1000
+    ):
+        raise RuntimeError(
+            "Preview voice tidak ditemukan. Preview ulang."
+        )
+
+    source_metadata = read_voice_metadata(source_metadata_path)
+    normalized_text = normalize_tts_text_indonesian(
+        text,
+        protected_terms,
+    )
+    expected_fingerprint = voice_asset_fingerprint(
+        voice_id=voice_id,
+        text=normalized_text,
+    )
+
+    if str(source_metadata.get("fingerprint") or "") != expected_fingerprint:
+        raise RuntimeError(
+            "Fingerprint preview berubah. Preview ulang."
+        )
+    if str(source_metadata.get("voice_id") or "") != str(voice_id):
+        raise RuntimeError(
+            "Voice ID preview berubah. Preview ulang."
+        )
+    if str(source_metadata.get("normalized_text") or "") != normalized_text:
+        raise RuntimeError(
+            "Teks preview berubah. Preview ulang."
+        )
+
+    source_duration = media_duration_seconds(source_audio)
+    if source_duration is None:
+        raise RuntimeError(
+            "Durasi preview tidak dapat dibaca"
+        )
+
+    max_seconds = voiceover_max_seconds(
+        target_duration_seconds,
+        closing_reserved_seconds,
+    )
+    source_duration = float(source_duration)
+    over_by = max(0.0, source_duration - max_seconds)
+
+    if source_duration <= max_seconds:
+        return {
+            "preview_asset_id": source_id,
+            "fingerprint": expected_fingerprint,
+            "audio_url": (
+                f"/media/{B18G_PREVIEW_VOICE_DIR}/"
+                f"preview-{source_id}.mp3"
+            ),
+            "normalized_text": normalized_text,
+            "source_duration_seconds": round(source_duration, 3),
+            "trimmed_duration_seconds": round(source_duration, 3),
+            "actual_duration_seconds": round(source_duration, 3),
+            "max_voiceover_seconds": max_seconds,
+            "trimmed_seconds": 0.0,
+            "speed_multiplier": 1.0,
+            "fit_applied": False,
+            "fits_timeline": True,
+        }
+
+    if over_by > B18H_MAX_OVER_SECONDS:
+        raise RuntimeError(
+            "Voice-over terlalu panjang untuk Auto Fit. "
+            "Gunakan Ringkas Otomatis atau Perpanjang Durasi."
+        )
+
+    work_id = uuid.uuid4().hex
+    preview_dir = STORAGE_ROOT / B18G_PREVIEW_VOICE_DIR
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    trimmed_path = preview_dir / f".fit-trim-{work_id}.mp3"
+    fitted_id = uuid.uuid4().hex
+    fitted_audio = voice_preview_audio_path(fitted_id)
+    fitted_metadata_path = voice_preview_metadata_path(fitted_id)
+
+    trim_filter = (
+        "silenceremove="
+        "start_periods=1:"
+        "start_duration=0.04:"
+        f"start_threshold={B18H_SILENCE_THRESHOLD_DB}dB,"
+        "areverse,"
+        "silenceremove="
+        "start_periods=1:"
+        "start_duration=0.04:"
+        f"start_threshold={B18H_SILENCE_THRESHOLD_DB}dB,"
+        "areverse"
+    )
+
+    try:
+        _run_voice_fit_ffmpeg(
+            source_audio,
+            trimmed_path,
+            trim_filter,
+        )
+
+        trimmed_duration = media_duration_seconds(trimmed_path)
+        if trimmed_duration is None:
+            raise RuntimeError(
+                "Durasi audio setelah trim tidak dapat dibaca"
+            )
+        trimmed_duration = float(trimmed_duration)
+        trimmed_seconds = max(0.0, source_duration - trimmed_duration)
+
+        speed_multiplier = 1.0
+        if trimmed_duration <= max_seconds:
+            shutil.copy2(trimmed_path, fitted_audio)
+        else:
+            target_seconds = max(
+                0.5,
+                max_seconds - B18H_TARGET_MARGIN_SECONDS,
+            )
+            speed_multiplier = trimmed_duration / target_seconds
+
+            if speed_multiplier > B18H_MAX_SPEED_MULTIPLIER:
+                raise RuntimeError(
+                    "Auto Fit membutuhkan kecepatan "
+                    f"{speed_multiplier:.3f}x, melebihi batas aman "
+                    f"{B18H_MAX_SPEED_MULTIPLIER:.2f}x. "
+                    "Gunakan Ringkas Otomatis atau Perpanjang Durasi."
+                )
+
+            _run_voice_fit_ffmpeg(
+                trimmed_path,
+                fitted_audio,
+                f"atempo={speed_multiplier:.6f}",
+            )
+
+        fitted_duration = media_duration_seconds(fitted_audio)
+        if fitted_duration is None:
+            raise RuntimeError(
+                "Durasi hasil Auto Fit tidak dapat dibaca"
+            )
+        fitted_duration = float(fitted_duration)
+
+        if fitted_duration > max_seconds + 0.04:
+            correction = fitted_duration / max(
+                0.5,
+                max_seconds - 0.04,
+            )
+            corrected_speed = speed_multiplier * correction
+
+            if corrected_speed > B18H_MAX_SPEED_MULTIPLIER:
+                raise RuntimeError(
+                    "Hasil Auto Fit masih melebihi timeline dan "
+                    "koreksi melampaui batas aman."
+                )
+
+            fitted_audio.unlink(missing_ok=True)
+            speed_multiplier = corrected_speed
+            _run_voice_fit_ffmpeg(
+                trimmed_path,
+                fitted_audio,
+                f"atempo={speed_multiplier:.6f}",
+            )
+            fitted_duration = media_duration_seconds(fitted_audio)
+            if fitted_duration is None:
+                raise RuntimeError(
+                    "Durasi hasil koreksi tidak dapat dibaca"
+                )
+            fitted_duration = float(fitted_duration)
+
+        if fitted_duration > max_seconds + 0.04:
+            raise RuntimeError(
+                "Hasil Auto Fit masih melebihi slot maksimum"
+            )
+
+        metadata = {
+            **source_metadata,
+            "asset_id": fitted_id,
+            "fingerprint": expected_fingerprint,
+            "approved": False,
+            "parent_preview_asset_id": source_id,
+            "fit_applied": True,
+            "fit_method": "trim_silence_and_atempo",
+            "source_duration_seconds": round(source_duration, 3),
+            "trimmed_duration_seconds": round(trimmed_duration, 3),
+            "trimmed_seconds": round(trimmed_seconds, 3),
+            "speed_multiplier": round(speed_multiplier, 6),
+            "duration_seconds": round(fitted_duration, 3),
+            "max_voiceover_seconds": max_seconds,
+            "created_at": now().isoformat(),
+        }
+        write_voice_metadata(fitted_metadata_path, metadata)
+
+        return {
+            "preview_asset_id": fitted_id,
+            "fingerprint": expected_fingerprint,
+            "audio_url": (
+                f"/media/{B18G_PREVIEW_VOICE_DIR}/"
+                f"preview-{fitted_id}.mp3"
+            ),
+            "normalized_text": normalized_text,
+            "source_duration_seconds": round(source_duration, 3),
+            "trimmed_duration_seconds": round(trimmed_duration, 3),
+            "actual_duration_seconds": round(fitted_duration, 3),
+            "max_voiceover_seconds": max_seconds,
+            "trimmed_seconds": round(trimmed_seconds, 3),
+            "speed_multiplier": round(speed_multiplier, 6),
+            "fit_applied": True,
+            "fits_timeline": fitted_duration <= max_seconds + 0.04,
+        }
+    except Exception:
+        fitted_audio.unlink(missing_ok=True)
+        fitted_metadata_path.unlink(missing_ok=True)
+        raise
+    finally:
+        trimmed_path.unlink(missing_ok=True)
+
+def resolve_approved_voice_asset(
+    asset_id: str,
+    expected_fingerprint: str | None = None,
+    expected_voice_id: str | None = None,
+    expected_text: str | None = None,
+) -> dict[str, Any]:
+    value = validate_voice_asset_id(asset_id)
+    audio_path = approved_voice_audio_path(value)
+    metadata_path = approved_voice_metadata_path(value)
+    if not audio_path.is_file() or audio_path.stat().st_size < 1000:
+        raise RuntimeError("Approved voice audio tidak ditemukan")
+    metadata = read_voice_metadata(metadata_path)
+    if metadata.get("approved") is not True:
+        raise RuntimeError("Voice asset belum di-approve")
+    if str(metadata.get("asset_id") or "") != value:
+        raise RuntimeError("Voice asset ID metadata tidak cocok")
+    fingerprint = str(metadata.get("fingerprint") or "").strip()
+    if not re.fullmatch(r"[a-f0-9]{64}", fingerprint):
+        raise RuntimeError("Fingerprint approved voice tidak valid")
+    if expected_fingerprint and fingerprint != str(expected_fingerprint).strip():
+        raise RuntimeError("Fingerprint approved voice berubah")
+    if expected_voice_id and str(metadata.get("voice_id") or "").strip() != str(expected_voice_id).strip():
+        raise RuntimeError("Voice ID approved audio tidak cocok")
+    normalized_text = str(metadata.get("normalized_text") or "").strip()
+    if expected_text is not None and normalized_text != str(expected_text).strip():
+        raise RuntimeError("Teks approved audio tidak cocok")
+    actual_duration = media_duration_seconds(audio_path)
+    if actual_duration is None:
+        raise RuntimeError("Durasi approved voice tidak dapat dibaca")
+    stored_duration = float(metadata.get("duration_seconds") or 0)
+    if stored_duration > 0 and abs(stored_duration - float(actual_duration)) > 0.25:
+        raise RuntimeError("Durasi approved voice tidak konsisten")
+    return {
+        **metadata,
+        "asset_id": value,
+        "fingerprint": fingerprint,
+        "duration_seconds": round(float(actual_duration), 3),
+        "audio_path": audio_path,
+        "metadata_path": metadata_path,
+    }
+
+
+# VOICE_DRAFT_APPROVAL_V1
+# B18C_AI_COPY_MODEL_START
+class AICopyGenerateRequest(BaseModel):
+    product_ids: list[int] = Field(
+        min_length=1,
+        max_length=6,
+    )
+    mode: Literal["hook", "cta", "both"] = "both"
+    audience: Literal[
+        "retail",
+        "retail_bulk",
+        "reseller",
+        "custom_bulk",
+    ] = "retail_bulk"
+    duration_seconds: int = Field(default=25, ge=10, le=60)
+    aspect_ratio: Literal["9:16", "1:1", "16:9"] = "9:16"
+    creative_template: str = Field(
+        default="bundle_hemat",
+        max_length=80,
+    )
+    promo_enabled: bool = False
+    promo_min_amount: int = Field(
+        default=100000,
+        ge=0,
+        le=100000000,
+    )
+    promo_discount_percent: int = Field(
+        default=10,
+        ge=1,
+        le=99,
+    )
+    promo_text: str | None = Field(default=None, max_length=240)
+    current_hook: str | None = Field(default=None, max_length=180)
+    current_cta: str | None = Field(default=None, max_length=140)
+# B18C_AI_COPY_MODEL_END
+
+
+class VoiceDraftRequest(BaseModel):
+    product_ids: list[int] = Field(
+        min_length=1,
+        max_length=12,
+    )
+    audience: Literal[
+        "retail",
+        "retail_bulk",
+        "reseller",
+        "custom_bulk",
+    ] = "retail"
+    duration_seconds: int = Field(
+        default=25,
+        ge=10,
+        le=60,
+    )
+    promo_enabled: bool = False
+    promo_min_amount: int = Field(
+        default=100000,
+        ge=0,
+        le=100000000,
+    )
+    promo_discount_percent: int = Field(
+        default=10,
+        ge=1,
+        le=99,
+    )
+    promo_text: str | None = Field(
+        default=None,
+        max_length=500,
+    )
+    draft_style: Literal[
+        'standard',
+        'compact',
+    ] = 'standard'
+
+
+class VoiceNormalizeRequest(BaseModel):
+    text: str = Field(
+        min_length=1,
+        max_length=2000,
+    )
+    protected_terms: list[str] = Field(
+        default_factory=list,
+        max_length=24,
+    )
+
+
 class VoicePreviewRequest(BaseModel):
     voice_id: str = Field(
         min_length=1,
@@ -506,7 +1686,58 @@ class VoicePreviewRequest(BaseModel):
             "Lihat detailnya dan pesan sekarang."
         ),
         min_length=1,
-        max_length=500,
+        max_length=2000,
+    )
+    protected_terms: list[str] = Field(
+        default_factory=list,
+        max_length=24,
+    )
+    target_duration_seconds: int = Field(
+        default=25,
+        ge=10,
+        le=60,
+    )
+    closing_reserved_seconds: float = Field(
+        default=B18D_CLOSING_RESERVED_SECONDS,
+        ge=2.0,
+        le=10.0,
+    )
+
+
+class VoiceApproveRequest(BaseModel):
+    preview_asset_id: str = Field(min_length=32, max_length=32)
+    fingerprint: str = Field(min_length=64, max_length=64)
+    voice_id: str = Field(min_length=1, max_length=150)
+    text: str = Field(min_length=1, max_length=2000)
+    protected_terms: list[str] = Field(default_factory=list, max_length=24)
+
+
+class VoiceFitRequest(BaseModel):
+    preview_asset_id: str = Field(
+        min_length=32,
+        max_length=32,
+    )
+    voice_id: str = Field(
+        min_length=1,
+        max_length=150,
+    )
+    text: str = Field(
+        min_length=1,
+        max_length=2000,
+    )
+    protected_terms: list[str] = Field(
+        default_factory=list,
+        max_length=24,
+    )
+    target_duration_seconds: int = Field(
+        default=25,
+        ge=10,
+        le=180,
+    )
+    closing_reserved_seconds: int = Field(
+        default=5,
+        ge=1,
+        le=20,
     )
 
 
@@ -552,6 +1783,139 @@ def render_queue() -> Queue:
 def now() -> datetime:
     return datetime.now(timezone.utc)
 
+
+
+# B18I_RAW_CATALOG_IDEMPOTENCY
+RAW_CATALOG_IDEMPOTENCY_TTL_SECONDS = 15
+RAW_CATALOG_IDEMPOTENCY_WAIT_SECONDS = 5.0
+
+
+def raw_catalog_request_fingerprint(
+    payload: RawVideoCatalogRequest,
+) -> str:
+    serialized = json.dumps(
+        payload.model_dump(
+            mode="json",
+            exclude_none=False,
+        ),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+    return hashlib.sha256(
+        serialized.encode("utf-8")
+    ).hexdigest()
+
+
+def raw_catalog_idempotency_key(
+    fingerprint: str,
+) -> str:
+    return (
+        "product_ads:raw_catalog:"
+        "idempotency:"
+        f"{fingerprint}"
+    )
+
+
+def raw_catalog_existing_response(
+    db: Session,
+    campaign_id: int,
+) -> dict[str, Any] | None:
+    campaign = db.get(
+        CreativeCampaign,
+        int(campaign_id),
+    )
+
+    if campaign is None:
+        return None
+
+    return {
+        "ok": True,
+        "deduplicated": True,
+        "message": (
+            "Permintaan identik sudah diproses. "
+            "Campaign sebelumnya digunakan kembali."
+        ),
+        "campaign": campaign_to_dict(
+            campaign
+        ),
+    }
+
+
+def acquire_raw_catalog_submission(
+    payload: RawVideoCatalogRequest,
+    db: Session,
+) -> tuple[str, str, Redis, dict[str, Any] | None]:
+    fingerprint = (
+        raw_catalog_request_fingerprint(
+            payload
+        )
+    )
+
+    key = raw_catalog_idempotency_key(
+        fingerprint
+    )
+
+    token = uuid.uuid4().hex
+    client = redis_connection()
+
+    acquired = client.set(
+        key,
+        f"processing:{token}",
+        nx=True,
+        ex=RAW_CATALOG_IDEMPOTENCY_TTL_SECONDS,
+    )
+
+    if acquired:
+        return (
+            fingerprint,
+            key,
+            client,
+            None,
+        )
+
+    deadline = (
+        time.monotonic()
+        + RAW_CATALOG_IDEMPOTENCY_WAIT_SECONDS
+    )
+
+    while time.monotonic() < deadline:
+        current = automation_decode(
+            client.get(key)
+        )
+
+        if current.startswith("campaign:"):
+            raw_id = current.split(
+                ":",
+                1,
+            )[1]
+
+            if raw_id.isdigit():
+                response = (
+                    raw_catalog_existing_response(
+                        db,
+                        int(raw_id),
+                    )
+                )
+
+                if response is not None:
+                    return (
+                        fingerprint,
+                        key,
+                        client,
+                        response,
+                    )
+
+        time.sleep(0.10)
+
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            "Permintaan campaign identik sedang "
+            "diproses. Tunggu beberapa detik."
+        ),
+    )
 
 def raw_veo_archive_root(
     product_id: int,
@@ -811,6 +2175,2435 @@ def list_raw_veo_clips(
             clips.append(manifest)
 
     return clips
+
+
+
+class PerformanceEntryRequest(BaseModel):
+    impressions: int = Field(
+        default=0,
+        ge=0,
+    )
+
+    clicks: int = Field(
+        default=0,
+        ge=0,
+    )
+
+    spend: float = Field(
+        default=0,
+        ge=0,
+    )
+
+    leads: int = Field(
+        default=0,
+        ge=0,
+    )
+
+    closings: int = Field(
+        default=0,
+        ge=0,
+    )
+
+    revenue: float = Field(
+        default=0,
+        ge=0,
+    )
+
+    notes: str | None = Field(
+        default=None,
+        max_length=2000,
+    )
+
+    source: str | None = Field(
+        default="manual",
+        max_length=100,
+    )
+
+
+
+
+class WABotCampaignRequest(BaseModel):
+    catalog_code: str | None = Field(
+        default=None,
+        max_length=100,
+    )
+
+    source_code: str | None = Field(
+        default="spacecraft_ads",
+        max_length=100,
+    )
+
+    external_campaign_code: str | None = Field(
+        default=None,
+        max_length=150,
+    )
+
+    whatsapp_number: str | None = Field(
+        default=None,
+        max_length=40,
+    )
+
+    opening_message: str | None = Field(
+        default=None,
+        max_length=2000,
+    )
+
+    webhook_enabled: bool = False
+
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+    )
+
+
+
+# B19A_CATALOG_CACHE_API
+def b19a_catalog_headers() -> dict[str, str]:
+    return {
+        "X-SpaceCraft-Wabot-Key":
+            SPACECRAFT_WABOT_KEY,
+        "Accept": "application/json",
+    }
+
+
+def b19a_spacecraft_json(
+    path: str,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if (
+        not SPACECRAFT_BASE_URL
+        or not SPACECRAFT_WABOT_KEY
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "SpaceCraft Catalog API "
+                "belum dikonfigurasi"
+            ),
+        )
+
+    try:
+        response = httpx.get(
+            f"{SPACECRAFT_BASE_URL}{path}",
+            headers=b19a_catalog_headers(),
+            params=params or None,
+            timeout=20,
+            follow_redirects=True,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "SpaceCraft Catalog API "
+                "tidak dapat dijangkau: "
+                f"{type(exc).__name__}"
+            ),
+        ) from exc
+
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "SpaceCraft Catalog API "
+                f"mengembalikan HTTP "
+                f"{response.status_code} "
+                f"untuk {path}"
+            ),
+        )
+
+    try:
+        payload = response.json()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Response SpaceCraft Catalog "
+                "bukan JSON valid"
+            ),
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Struktur response SpaceCraft "
+                "Catalog tidak valid"
+            ),
+        )
+
+    return payload
+
+
+def b19a_clean_external_product_id(
+    item: dict[str, Any],
+) -> str:
+    value = str(
+        item.get("external_id")
+        or item.get("product_id")
+        or item.get("id")
+        or ""
+    ).strip()
+
+    if value.startswith(
+        "spacecraft-product-"
+    ):
+        value = value.removeprefix(
+            "spacecraft-product-"
+        )
+
+    return value
+
+
+def b19a_pricing_source_code(
+    pricing_source: str | None,
+) -> str:
+    value = str(
+        pricing_source
+        or "meta"
+    ).strip().lower()
+
+    if value == "instagram":
+        return "IG"
+
+    if value == "tiktok":
+        return "TT"
+
+    if value == "direct":
+        return "WEB"
+
+    return "META"
+
+
+def b19a_go_url_for_pricing_source(
+    catalog_code: str,
+    pricing_source: str | None,
+) -> str:
+    value = str(
+        pricing_source
+        or "meta"
+    ).strip().lower()
+
+    source_path = {
+        "instagram": "instagram",
+        "tiktok": "tiktok",
+        "direct": "web",
+    }.get(value, "meta")
+
+    return (
+        f"{SPACECRAFT_BASE_URL}"
+        f"/go/{source_path}/{catalog_code}"
+    )
+
+
+def b19a_live_price_overrides(
+    catalog_code: str,
+    pricing_source: str | None,
+    rows: list[SpacecraftCatalogProductCache],
+) -> tuple[dict[int, dict[str, Any]], dict[str, Any]]:
+    source_code = b19a_pricing_source_code(
+        pricing_source
+    )
+
+    detail = b19a_spacecraft_json(
+        f"/api/wabot/catalogs/{catalog_code}",
+        params={"source": source_code},
+    )
+
+    catalog = (
+        detail.get("catalog")
+        if isinstance(detail.get("catalog"), dict)
+        else {}
+    )
+
+    products = (
+        catalog.get("products")
+        if isinstance(catalog.get("products"), list)
+        else (
+            detail.get("products")
+            if isinstance(detail.get("products"), list)
+            else []
+        )
+    )
+
+    external_to_local = {
+        str(row.external_product_id): int(row.local_product_id)
+        for row in rows
+        if row.local_product_id
+    }
+
+    overrides: dict[int, dict[str, Any]] = {}
+
+    for item in products:
+        if not isinstance(item, dict):
+            continue
+
+        external_id = b19a_clean_external_product_id(
+            item
+        )
+
+        local_id = external_to_local.get(
+            external_id
+        )
+
+        if not local_id:
+            continue
+
+        overrides[local_id] = {
+            "price": item.get("price"),
+            "price_label": (
+                item.get("price_label")
+                or item.get("formatted_price")
+            ),
+            "direct_price": item.get("direct_price"),
+            "direct_price_label": item.get(
+                "direct_price_label"
+            ),
+            "pricing_layer": item.get(
+                "pricing_layer"
+            ),
+        }
+
+    return overrides, {
+        "source_code": source_code,
+        "pricing_layer": (
+            catalog.get("pricing", {})
+            if isinstance(
+                catalog.get("pricing"),
+                dict,
+            )
+            else {}
+        ),
+    }
+
+
+def b19a_catalog_hash(
+    catalog: dict[str, Any],
+    products: list[dict[str, Any]],
+) -> str:
+    canonical = {
+        "catalog_code": wabot_normalize_code(
+            catalog.get("catalog_id")
+            or catalog.get("catalog_code")
+            or catalog.get("code")
+        ),
+        "name": b11_clean_text(
+            catalog.get("name")
+            or catalog.get("headline")
+            or ""
+        ),
+        "catalog_type":
+            catalog.get("catalog_type"),
+        "flow_type":
+            catalog.get("flow_type"),
+        "products": [
+            {
+                "external_product_id":
+                    b19a_clean_external_product_id(
+                        item
+                    ),
+                "status": str(
+                    item.get("status")
+                    or ""
+                ).strip().lower(),
+                "position": index,
+                "quantity": int(
+                    item.get(
+                        "catalog_bundle_quantity"
+                    )
+                    or 1
+                ),
+                "is_primary": bool(
+                    item.get(
+                        "catalog_is_primary"
+                    )
+                ),
+            }
+            for index, item in enumerate(
+                products,
+                start=1,
+            )
+        ],
+    }
+
+    encoded = json.dumps(
+        canonical,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    return hashlib.sha256(
+        encoded
+    ).hexdigest()
+
+
+def b19a_sync_catalog_cache(
+    db: Session,
+) -> dict[str, Any]:
+    list_payload = b19a_spacecraft_json(
+        "/api/wabot/catalogs"
+    )
+
+    raw_catalogs = (
+        list_payload.get("catalogs")
+        or []
+    )
+
+    if not raw_catalogs:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "SpaceCraft tidak "
+                "mengembalikan Mini Catalog"
+            ),
+        )
+
+    seen_codes: set[str] = set()
+    synced: list[dict[str, Any]] = []
+
+    for summary in raw_catalogs:
+        if not isinstance(summary, dict):
+            continue
+
+        code = wabot_normalize_code(
+            summary.get("catalog_id")
+            or summary.get("catalog_code")
+            or summary.get("code")
+        )
+
+        if not code:
+            continue
+
+        detail_payload = (
+            b19a_spacecraft_json(
+                f"/api/wabot/catalogs/{code}"
+            )
+        )
+
+        catalog_payload = (
+            detail_payload.get("catalog")
+            or {}
+        )
+
+        if not isinstance(
+            catalog_payload,
+            dict,
+        ):
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"Detail catalog {code} "
+                    "tidak valid"
+                ),
+            )
+
+        products = (
+            catalog_payload.get("products")
+            or []
+        )
+
+        if not isinstance(products, list):
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"Detail catalog {code} "
+                    "memiliki products yang "
+                    "bukan list"
+                ),
+            )
+
+        # B19_SYNC_EMPTY_MEMBERSHIP_GUARD
+        existing_catalog = db.scalar(
+            select(
+                SpacecraftCatalogCache
+            ).where(
+                SpacecraftCatalogCache
+                .catalog_code
+                == code
+            )
+        )
+
+        existing_member_count = 0
+
+        if existing_catalog is not None:
+            existing_member_count = int(
+                db.scalar(
+                    select(
+                        func.count(
+                            SpacecraftCatalogProductCache.id
+                        )
+                    ).where(
+                        SpacecraftCatalogProductCache
+                        .catalog_id
+                        == existing_catalog.id
+                    )
+                )
+                or 0
+            )
+
+        declared_count = int(
+            catalog_payload.get(
+                "products_count"
+            )
+            or summary.get(
+                "products_count"
+            )
+            or 0
+        )
+
+        if (
+            not products
+            and (
+                existing_member_count > 0
+                or declared_count > 0
+            )
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Sync {code} dibatalkan: "
+                    "SpaceCraft mengembalikan "
+                    "membership kosong/tidak "
+                    "konsisten. Cache lama "
+                    "dipertahankan."
+                ),
+            )
+
+        if (
+            declared_count > 0
+            and len(products)
+            != declared_count
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Sync {code} dibatalkan: "
+                    f"products_count={declared_count} "
+                    f"tetapi products={len(products)}. "
+                    "Cache lama dipertahankan."
+                ),
+            )
+
+        seen_codes.add(code)
+
+        external_ids = [
+            b19a_clean_external_product_id(
+                item
+            )
+            for item in products
+            if isinstance(item, dict)
+        ]
+
+        external_ids = [
+            item
+            for item in external_ids
+            if item
+        ]
+
+        local_products = list(
+            db.scalars(
+                select(Product).where(
+                    Product.external_id.in_(
+                        external_ids
+                    )
+                )
+            ).all()
+        ) if external_ids else []
+
+        local_by_external = {
+            str(item.external_id): item
+            for item in local_products
+        }
+
+        catalog = db.scalar(
+            select(
+                SpacecraftCatalogCache
+            ).where(
+                SpacecraftCatalogCache
+                .catalog_code
+                == code
+            )
+        )
+
+        if catalog is None:
+            catalog = (
+                SpacecraftCatalogCache(
+                    catalog_code=code,
+                    name=code,
+                    catalog_hash=(
+                        "0" * 64
+                    ),
+                )
+            )
+            db.add(catalog)
+            db.flush()
+
+        catalog.name = b11_clean_text(
+            catalog_payload.get("name")
+            or catalog_payload.get(
+                "headline"
+            )
+            or summary.get("name")
+            or code
+        )
+
+        catalog.slug = (
+            catalog_payload.get("slug")
+            or summary.get("slug")
+        )
+
+        catalog.headline = (
+            catalog_payload.get("headline")
+            or summary.get("headline")
+        )
+
+        catalog.catalog_type = (
+            catalog_payload.get(
+                "catalog_type"
+            )
+            or summary.get("catalog_type")
+        )
+
+        catalog.flow_type = (
+            catalog_payload.get("flow_type")
+            or summary.get("flow_type")
+        )
+
+        catalog.source_code = (
+            catalog_payload.get("source_code")
+            or summary.get("source_code")
+        )
+
+        catalog.campaign_name = (
+            catalog_payload.get(
+                "campaign_name"
+            )
+            or summary.get("campaign_name")
+        )
+
+        catalog.audience_label = (
+            catalog_payload.get(
+                "audience_label"
+            )
+            or summary.get("audience_label")
+        )
+
+        catalog.go_url = (
+            summary.get("go_url")
+            or (
+                f"{SPACECRAFT_BASE_URL}"
+                f"/go/{code}"
+            )
+        )
+
+        catalog.status = "published"
+        catalog.products_count = len(
+            products
+        )
+
+        catalog.catalog_hash = (
+            b19a_catalog_hash(
+                catalog_payload,
+                [
+                    item
+                    for item in products
+                    if isinstance(item, dict)
+                ],
+            )
+        )
+
+        catalog.source_synced_at = str(
+            detail_payload.get("synced_at")
+            or list_payload.get("synced_at")
+            or ""
+        ) or None
+
+        catalog.payload = {
+            "summary": summary,
+            "detail": catalog_payload,
+            "shop_id":
+                detail_payload.get("shop_id"),
+            "shop_name":
+                detail_payload.get("shop_name"),
+        }
+
+        catalog.last_synced_at = now()
+        catalog.updated_at = now()
+
+        db.execute(
+            delete(
+                SpacecraftCatalogProductCache
+            ).where(
+                SpacecraftCatalogProductCache
+                .catalog_id
+                == catalog.id
+            )
+        )
+
+        mapped_count = 0
+
+        for position, item in enumerate(
+            products,
+            start=1,
+        ):
+            if not isinstance(item, dict):
+                continue
+
+            external_id = (
+                b19a_clean_external_product_id(
+                    item
+                )
+            )
+
+            local_product = (
+                local_by_external.get(
+                    external_id
+                )
+            )
+
+            if (
+                local_product is not None
+                and str(
+                    local_product.status
+                    or ""
+                ).strip().lower()
+                == ADS_PUBLISHED_STATUS
+            ):
+                local_product_id = (
+                    local_product.id
+                )
+                mapped_count += 1
+            else:
+                local_product_id = None
+
+            db.add(
+                SpacecraftCatalogProductCache(
+                    catalog_id=catalog.id,
+                    external_product_id=(
+                        external_id
+                    ),
+                    local_product_id=(
+                        local_product_id
+                    ),
+                    name=b11_clean_text(
+                        item.get("name")
+                        or external_id
+                        or (
+                            f"Produk "
+                            f"{position}"
+                        )
+                    ),
+                    slug=item.get("slug"),
+                    status=str(
+                        item.get("status")
+                        or "published"
+                    ).strip().lower(),
+                    commerce_position=(
+                        position
+                    ),
+                    bundle_quantity=max(
+                        1,
+                        int(
+                            item.get(
+                                "catalog_bundle_quantity"
+                            )
+                            or 1
+                        ),
+                    ),
+                    is_primary=bool(
+                        item.get(
+                            "catalog_is_primary"
+                        )
+                    ),
+                    catalog_label=(
+                        item.get(
+                            "catalog_label"
+                        )
+                    ),
+                    payload=item,
+                    created_at=now(),
+                    updated_at=now(),
+                )
+            )
+
+        synced.append({
+            "catalog_code": code,
+            "products_count":
+                len(products),
+            "mapped_products_count":
+                mapped_count,
+            "catalog_hash":
+                catalog.catalog_hash,
+        })
+
+    hidden_codes: list[str] = []
+
+    for catalog in db.scalars(
+        select(
+            SpacecraftCatalogCache
+        )
+    ).all():
+        if (
+            catalog.catalog_code
+            not in seen_codes
+        ):
+            catalog.status = (
+                "source_hidden"
+            )
+            catalog.updated_at = now()
+            hidden_codes.append(
+                catalog.catalog_code
+            )
+
+    # B19D_DRIFT_RECONCILE_AFTER_SYNC
+    drift = b19d_reconcile_catalog_drift(db)
+
+    db.commit()
+
+    return {
+        "ok": True,
+        "source": "spacecraft",
+        "drift": drift,
+        "count": len(synced),
+        "catalogs": synced,
+        "hidden_catalog_codes":
+            hidden_codes,
+        "source_synced_at":
+            list_payload.get(
+                "synced_at"
+            ),
+        "synced_at": now().isoformat(),
+    }
+
+
+def b19a_catalog_rows(
+    db: Session,
+    catalog_id: int,
+) -> list[
+    SpacecraftCatalogProductCache
+]:
+    return list(
+        db.scalars(
+            select(
+                SpacecraftCatalogProductCache
+            )
+            .where(
+                SpacecraftCatalogProductCache
+                .catalog_id
+                == catalog_id
+            )
+            .order_by(
+                SpacecraftCatalogProductCache
+                .commerce_position
+            )
+        ).all()
+    )
+
+
+def b19a_raw_video_counts(
+    db: Session,
+    local_product_ids: list[int],
+) -> dict[int, int]:
+    if not local_product_ids:
+        return {}
+
+    rows = db.execute(
+        select(
+            ProductAsset.product_id,
+            func.count(ProductAsset.id),
+        )
+        .where(
+            ProductAsset.product_id.in_(
+                local_product_ids
+            ),
+            ProductAsset.asset_type
+            == "video",
+        )
+        .group_by(
+            ProductAsset.product_id
+        )
+    ).all()
+
+    return {
+        int(product_id): int(count)
+        for product_id, count in rows
+    }
+
+
+def b19a_catalog_to_dict(
+    catalog: SpacecraftCatalogCache,
+    products: list[
+        SpacecraftCatalogProductCache
+    ],
+    db: Session,
+    *,
+    include_products: bool,
+) -> dict[str, Any]:
+    local_ids = [
+        int(item.local_product_id)
+        for item in products
+        if item.local_product_id
+    ]
+
+    raw_counts = (
+        b19a_raw_video_counts(
+            db,
+            local_ids,
+        )
+    )
+
+    mapped_count = sum(
+        1
+        for item in products
+        if item.local_product_id
+    )
+
+    published_count = sum(
+        1
+        for item in products
+        if str(
+            item.status or ""
+        ).strip().lower()
+        == ADS_PUBLISHED_STATUS
+    )
+
+    ready_count = sum(
+        1
+        for item in products
+        if (
+            item.local_product_id
+            and raw_counts.get(
+                int(
+                    item.local_product_id
+                ),
+                0,
+            ) > 0
+        )
+    )
+
+    product_count = len(products)
+    reasons: list[str] = []
+
+    if product_count < 5:
+        reasons.append(
+            "Catalog memiliki kurang "
+            "dari 5 produk"
+        )
+
+    if product_count > 6:
+        reasons.append(
+            "Render engine saat ini "
+            "maksimal 6 produk"
+        )
+
+    if mapped_count != product_count:
+        reasons.append(
+            "Ada produk catalog yang "
+            "belum terpetakan ke Ads"
+        )
+
+    if published_count != product_count:
+        reasons.append(
+            "Ada anggota catalog yang "
+            "bukan published"
+        )
+
+    compatible = (
+        catalog.status == "published"
+        and 5 <= product_count <= 6
+        and mapped_count == product_count
+        and published_count == product_count
+    )
+
+    result: dict[str, Any] = {
+        "catalog_code":
+            catalog.catalog_code,
+        "catalog_id":
+            catalog.catalog_code,
+        "name": catalog.name,
+        "slug": catalog.slug,
+        "headline": catalog.headline,
+        "catalog_type":
+            catalog.catalog_type,
+        "flow_type":
+            catalog.flow_type,
+        "source_code":
+            catalog.source_code,
+        "campaign_name":
+            catalog.campaign_name,
+        "audience_label":
+            catalog.audience_label,
+        "go_url": catalog.go_url,
+        "status": catalog.status,
+        "products_count":
+            product_count,
+        "mapped_products_count":
+            mapped_count,
+        "published_products_count":
+            published_count,
+        "raw_video_ready_count":
+            ready_count,
+        "catalog_hash":
+            catalog.catalog_hash,
+        "render_compatible":
+            compatible,
+        "compatibility_reasons":
+            reasons,
+        "source_synced_at":
+            catalog.source_synced_at,
+        "last_synced_at": (
+            catalog.last_synced_at
+            .isoformat()
+            if catalog.last_synced_at
+            else None
+        ),
+    }
+
+    if include_products:
+        result["products"] = [
+            {
+                "external_product_id":
+                    item.external_product_id,
+                "local_product_id":
+                    item.local_product_id,
+                "name": item.name,
+                "slug": item.slug,
+                "status": item.status,
+                "commerce_position":
+                    item.commerce_position,
+                "bundle_quantity":
+                    item.bundle_quantity,
+                "is_primary":
+                    item.is_primary,
+                "catalog_label":
+                    item.catalog_label,
+                "raw_video_count": (
+                    raw_counts.get(
+                        int(
+                            item.local_product_id
+                        ),
+                        0,
+                    )
+                    if item.local_product_id
+                    else 0
+                ),
+                "has_raw_video": bool(
+                    item.local_product_id
+                    and raw_counts.get(
+                        int(
+                            item.local_product_id
+                        ),
+                        0,
+                    ) > 0
+                ),
+            }
+            for item in products
+        ]
+
+    return result
+
+
+@router.post(
+    "/api/spacecraft/catalogs/sync"
+)
+def sync_spacecraft_catalog_cache(
+    db: Session = Depends(get_db),
+):
+    return b19a_sync_catalog_cache(
+        db
+    )
+
+
+@router.get(
+    "/api/spacecraft/catalogs"
+)
+def list_spacecraft_catalog_cache(
+    db: Session = Depends(get_db),
+):
+    catalogs = list(
+        db.scalars(
+            select(
+                SpacecraftCatalogCache
+            )
+            .where(
+                SpacecraftCatalogCache
+                .status
+                == "published"
+            )
+            .order_by(
+                SpacecraftCatalogCache
+                .catalog_code
+            )
+        ).all()
+    )
+
+    items = [
+        b19a_catalog_to_dict(
+            catalog,
+            b19a_catalog_rows(
+                db,
+                catalog.id,
+            ),
+            db,
+            include_products=False,
+        )
+        for catalog in catalogs
+    ]
+
+    return {
+        "ok": True,
+        "source": "cache",
+        "count": len(items),
+        "catalogs": items,
+    }
+
+
+@router.get(
+    "/api/spacecraft/catalogs/{catalog_code}"
+)
+def get_spacecraft_catalog_cache(
+    catalog_code: str,
+    db: Session = Depends(get_db),
+):
+    code = wabot_normalize_code(
+        catalog_code
+    )
+
+    catalog = db.scalar(
+        select(
+            SpacecraftCatalogCache
+        ).where(
+            SpacecraftCatalogCache
+            .catalog_code
+            == code
+        )
+    )
+
+    if catalog is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Mini Catalog SpaceCraft "
+                "tidak ditemukan"
+            ),
+        )
+
+    return {
+        "ok": True,
+        "catalog": (
+            b19a_catalog_to_dict(
+                catalog,
+                b19a_catalog_rows(
+                    db,
+                    catalog.id,
+                ),
+                db,
+                include_products=True,
+            )
+        ),
+    }
+
+
+def b19a_validate_linked_catalog(
+    payload: RawVideoCatalogRequest,
+    selected_product_ids: list[int],
+    db: Session,
+) -> dict[str, Any] | None:
+    if (
+        payload.catalog_source
+        != "spacecraft"
+    ):
+        return None
+
+    code = wabot_normalize_code(
+        payload.catalog_code
+    )
+
+    if not code:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Pilih Mini Catalog "
+                "SpaceCraft sebelum render"
+            ),
+        )
+
+    if not payload.catalog_hash:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Catalog hash belum tersedia. "
+                "Refresh dan Apply Catalog ulang."
+            ),
+        )
+
+    catalog = db.scalar(
+        select(
+            SpacecraftCatalogCache
+        ).where(
+            SpacecraftCatalogCache
+            .catalog_code
+            == code,
+            SpacecraftCatalogCache
+            .status
+            == "published",
+        )
+    )
+
+    if catalog is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Mini Catalog {code} "
+                "tidak tersedia atau "
+                "tidak published"
+            ),
+        )
+
+    rows = b19a_catalog_rows(
+        db,
+        catalog.id,
+    )
+
+    context = b19a_catalog_to_dict(
+        catalog,
+        rows,
+        db,
+        include_products=True,
+    )
+
+    if not context[
+        "render_compatible"
+    ]:
+        reason = (
+            context[
+                "compatibility_reasons"
+            ][0]
+            if context[
+                "compatibility_reasons"
+            ]
+            else (
+                "Catalog belum kompatibel "
+                "untuk render"
+            )
+        )
+
+        raise HTTPException(
+            status_code=422,
+            detail=f"{code}: {reason}",
+        )
+
+    if (
+        payload.catalog_hash
+        != catalog.catalog_hash
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{code} berubah sejak "
+                "dipilih. Refresh dan "
+                "Apply Catalog ulang."
+            ),
+        )
+
+    commerce_product_ids = [
+        int(item.local_product_id)
+        for item in rows
+        if item.local_product_id
+    ]
+
+    if (
+        len(commerce_product_ids)
+        != len(selected_product_ids)
+        or set(commerce_product_ids)
+        != set(selected_product_ids)
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Anggota Creative Set harus "
+                "sama persis dengan anggota "
+                f"Mini Catalog {code}"
+            ),
+        )
+
+    price_overrides, pricing_context = (
+        b19a_live_price_overrides(
+            code,
+            payload.pricing_source,
+            rows,
+        )
+    )
+
+    source_code = pricing_context[
+        "source_code"
+    ]
+
+    return {
+        "catalog_code": code,
+        "catalog_hash":
+            catalog.catalog_hash,
+        "catalog_name": catalog.name,
+        "catalog_type":
+            catalog.catalog_type,
+        "flow_type":
+            catalog.flow_type,
+        "source_code":
+            source_code,
+        "pricing_source":
+            payload.pricing_source,
+        "pricing_source_code":
+            source_code,
+        "pricing_layer":
+            pricing_context.get(
+                "pricing_layer"
+            ),
+        "price_overrides":
+            price_overrides,
+        "go_url": b19a_go_url_for_pricing_source(
+            code,
+            payload.pricing_source,
+        ),
+        "commerce_product_ids":
+            commerce_product_ids,
+        "snapshot": context,
+    }
+
+
+
+
+# B19B_CREATIVE_READINESS_API
+def b19b_product_readiness(
+    product_id: int,
+    db: Session,
+) -> dict[str, Any]:
+    result = product_raw_videos(
+        product_id,
+        db,
+    )
+
+    raw_videos = (
+        result.get("raw_videos")
+        or []
+    )
+
+    primary_count = sum(
+        1
+        for item in raw_videos
+        if item.get("is_primary")
+    )
+
+    return {
+        "product_id": product_id,
+        "raw_video_count": len(raw_videos),
+        "primary_raw_video_count":
+            primary_count,
+        "has_raw_video": bool(raw_videos),
+        "has_primary_raw_video":
+            primary_count > 0,
+        "creative_ready": bool(raw_videos),
+        "status": (
+            "ready"
+            if raw_videos
+            else "missing_assets"
+        ),
+        "raw_videos": raw_videos,
+    }
+
+
+def b19b_catalog_readiness(
+    catalog_code: str,
+    db: Session,
+) -> dict[str, Any]:
+    code = wabot_normalize_code(
+        catalog_code
+    )
+
+    catalog = db.scalar(
+        select(
+            SpacecraftCatalogCache
+        ).where(
+            SpacecraftCatalogCache
+            .catalog_code
+            == code
+        )
+    )
+
+    if catalog is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Mini Catalog SpaceCraft "
+                "tidak ditemukan"
+            ),
+        )
+
+    rows = b19a_catalog_rows(
+        db,
+        catalog.id,
+    )
+
+    products: list[dict[str, Any]] = []
+
+    for row in rows:
+        if not row.local_product_id:
+            products.append({
+                "external_product_id":
+                    row.external_product_id,
+                "local_product_id": None,
+                "name": row.name,
+                "commerce_position":
+                    row.commerce_position,
+                "raw_video_count": 0,
+                "primary_raw_video_count": 0,
+                "has_raw_video": False,
+                "has_primary_raw_video": False,
+                "creative_ready": False,
+                "status": "unmapped",
+                "raw_videos": [],
+            })
+            continue
+
+        item = b19b_product_readiness(
+            int(row.local_product_id),
+            db,
+        )
+
+        item.update({
+            "external_product_id":
+                row.external_product_id,
+            "local_product_id":
+                int(row.local_product_id),
+            "name": row.name,
+            "commerce_position":
+                row.commerce_position,
+        })
+
+        products.append(item)
+
+    total = len(products)
+
+    ready = sum(
+        1
+        for item in products
+        if item["creative_ready"]
+    )
+
+    primary_ready = sum(
+        1
+        for item in products
+        if item["has_primary_raw_video"]
+    )
+
+    missing = [
+        item
+        for item in products
+        if not item["creative_ready"]
+    ]
+
+    unmapped = [
+        item
+        for item in products
+        if item["status"] == "unmapped"
+    ]
+
+    ready_to_render = (
+        total > 0
+        and ready == total
+        and not unmapped
+    )
+
+    if ready_to_render:
+        status = "ready"
+    elif ready == 0:
+        status = "not_ready"
+    else:
+        status = "missing_assets"
+
+    return {
+        "catalog_code": code,
+        "catalog_name": catalog.name,
+        "catalog_hash":
+            catalog.catalog_hash,
+        "products_total": total,
+        "products_ready": ready,
+        "products_missing":
+            len(missing),
+        "products_with_primary":
+            primary_ready,
+        "ready_percentage": (
+            round(
+                (ready / total) * 100,
+                1,
+            )
+            if total
+            else 0.0
+        ),
+        "ready_to_render":
+            ready_to_render,
+        "status": status,
+        "products": products,
+        "checked_at": now().isoformat(),
+    }
+
+
+@router.get(
+    "/api/spacecraft/catalogs/"
+    "{catalog_code}/readiness"
+)
+def get_spacecraft_catalog_readiness(
+    catalog_code: str,
+    db: Session = Depends(get_db),
+):
+    return {
+        "ok": True,
+        "readiness":
+            b19b_catalog_readiness(
+                catalog_code,
+                db,
+            ),
+    }
+
+
+def b19b_validate_catalog_readiness(
+    payload: RawVideoCatalogRequest,
+    db: Session,
+) -> dict[str, Any] | None:
+    if (
+        payload.catalog_source
+        != "spacecraft"
+    ):
+        return None
+
+    readiness = b19b_catalog_readiness(
+        payload.catalog_code or "",
+        db,
+    )
+
+    if not readiness[
+        "ready_to_render"
+    ]:
+        missing_names = [
+            item["name"]
+            for item in readiness[
+                "products"
+            ]
+            if not item[
+                "creative_ready"
+            ]
+        ]
+
+        detail = (
+            ", ".join(
+                missing_names[:4]
+            )
+            or (
+                "anggota catalog belum "
+                "siap"
+            )
+        )
+
+        if len(missing_names) > 4:
+            detail += (
+                f" dan "
+                f"{len(missing_names) - 4} "
+                "produk lain"
+            )
+
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Creative Readiness belum "
+                f"lengkap untuk "
+                f"{readiness['catalog_code']}: "
+                f"{readiness['products_ready']}/"
+                f"{readiness['products_total']} "
+                f"produk siap. "
+                f"Belum siap: {detail}"
+            ),
+        )
+
+    return readiness
+
+
+
+
+# B19C_LINKED_CREATIVE_SET_API
+def b19c_new_code() -> str:
+    return (
+        "CS"
+        + datetime.now(
+            timezone.utc
+        ).strftime("%y%m%d")
+        + uuid.uuid4().hex[:6].upper()
+    )
+
+
+def b19c_asset_ids(
+    payload: RawVideoCatalogRequest,
+) -> list[int]:
+    result: list[int] = []
+
+    for item in payload.product_clips:
+        value = str(
+            item.clip_id
+            or ""
+        ).strip()
+
+        if value.startswith("asset-"):
+            raw = value.removeprefix(
+                "asset-"
+            )
+
+            if raw.isdigit():
+                result.append(int(raw))
+
+    return result
+
+
+def b19c_to_dict(
+    item: CreativeSet,
+) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "creative_set_code":
+            item.creative_set_code,
+        "source_type":
+            item.source_type,
+        "catalog_code":
+            item.catalog_code,
+        "catalog_hash":
+            item.catalog_hash,
+        "catalog_name":
+            item.catalog_name,
+        "campaign_id":
+            item.campaign_id,
+        "status":
+            item.status,
+        "commerce_ready":
+            bool(item.commerce_ready),
+        "product_ids":
+            item.product_ids or [],
+        "commerce_product_ids":
+            item.commerce_product_ids or [],
+        "creative_product_ids":
+            item.creative_product_ids or [],
+        "raw_asset_ids":
+            item.raw_asset_ids or [],
+        "go_url":
+            item.go_url,
+        "snapshot":
+            item.snapshot or {},
+        # B19D_DRIFT_SERIALIZATION
+        "drift_status":
+            item.drift_status or "current",
+        "current_catalog_hash":
+            item.current_catalog_hash,
+        "drift_reason":
+            item.drift_reason,
+        "drift_detected_at": (
+            item.drift_detected_at.isoformat()
+            if item.drift_detected_at
+            else None
+        ),
+        "drift_checked_at": (
+            item.drift_checked_at.isoformat()
+            if item.drift_checked_at
+            else None
+        ),
+        "is_stale": (
+            item.drift_status == "stale"
+        ),
+        "created_at": (
+            item.created_at.isoformat()
+            if item.created_at
+            else None
+        ),
+        "updated_at": (
+            item.updated_at.isoformat()
+            if item.updated_at
+            else None
+        ),
+    }
+
+
+def b19c_prepare(
+    request: CreativeSetPrepareRequest,
+    db: Session,
+) -> CreativeSet:
+    product_ids = list(
+        dict.fromkeys(
+            int(item)
+            for item in request.product_ids
+            if int(item) > 0
+        )
+    )
+
+    if request.source_type == "custom":
+        item = CreativeSet(
+            creative_set_code=
+                b19c_new_code(),
+            source_type="custom",
+            catalog_code=None,
+            catalog_hash=None,
+            catalog_name=(
+                b11_clean_text(
+                    request.name
+                    or "Custom Creative Set"
+                )
+            ),
+            status="internal_draft",
+            commerce_ready=False,
+            product_ids=product_ids,
+            commerce_product_ids=[],
+            creative_product_ids=
+                product_ids,
+            raw_asset_ids=[],
+            go_url=None,
+            snapshot={
+                "source_type": "custom",
+                "product_ids":
+                    product_ids,
+                "created_at":
+                    now().isoformat(),
+            },
+            drift_status="not_applicable",
+            current_catalog_hash=None,
+            drift_reason=None,
+            drift_detected_at=None,
+            drift_checked_at=now(),
+            created_at=now(),
+            updated_at=now(),
+        )
+
+        db.add(item)
+        db.commit()
+        db.refresh(item)
+
+        return item
+
+    code = wabot_normalize_code(
+        request.catalog_code
+    )
+
+    if not code:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "catalog_code wajib untuk "
+                "Linked Creative Set"
+            ),
+        )
+
+    catalog = (
+        get_spacecraft_catalog_cache(
+            code,
+            db=db,
+        )["catalog"]
+    )
+
+    readiness = b19b_catalog_readiness(
+        code,
+        db,
+    )
+
+    if (
+        request.catalog_hash
+        != catalog["catalog_hash"]
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{code} berubah. "
+                "Refresh dan Apply ulang."
+            ),
+        )
+
+    commerce_ids = [
+        int(item["local_product_id"])
+        for item in catalog["products"]
+        if item["local_product_id"]
+    ]
+
+    if (
+        len(commerce_ids)
+        != len(product_ids)
+        or set(commerce_ids)
+        != set(product_ids)
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Anggota Creative Set harus "
+                "sama dengan anggota "
+                f"{code}"
+            ),
+        )
+
+    status = (
+        "ready"
+        if readiness[
+            "ready_to_render"
+        ]
+        else "missing_assets"
+    )
+
+    item = CreativeSet(
+        creative_set_code=
+            b19c_new_code(),
+        source_type="spacecraft",
+        catalog_code=code,
+        catalog_hash=
+            catalog["catalog_hash"],
+        catalog_name=
+            catalog["name"],
+        status=status,
+        commerce_ready=bool(
+            readiness[
+                "ready_to_render"
+            ]
+        ),
+        product_ids=commerce_ids,
+        commerce_product_ids=
+            commerce_ids,
+        creative_product_ids=
+            product_ids,
+        raw_asset_ids=[],
+        go_url=catalog["go_url"],
+        snapshot={
+            "catalog": catalog,
+            "readiness": readiness,
+            "prepared_at":
+                now().isoformat(),
+        },
+        drift_status="current",
+        current_catalog_hash=
+            catalog["catalog_hash"],
+        drift_reason=None,
+        drift_detected_at=None,
+        drift_checked_at=now(),
+        created_at=now(),
+        updated_at=now(),
+    )
+
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+
+    return item
+
+
+def b19c_validate_for_render(
+    payload: RawVideoCatalogRequest,
+    selected_product_ids: list[int],
+    db: Session,
+) -> CreativeSet:
+    code = wabot_normalize_code(
+        payload.creative_set_code
+    )
+
+    if not code:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Creative Set belum dibuat. "
+                "Apply Mini Catalog ulang."
+            ),
+        )
+
+    item = db.scalar(
+        select(
+            CreativeSet
+        ).where(
+            CreativeSet
+            .creative_set_code
+            == code
+        )
+    )
+
+    if item is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Creative Set {code} "
+                "tidak ditemukan"
+            ),
+        )
+
+    if (
+        item.source_type
+        != payload.catalog_source
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Source Creative Set tidak "
+                "sesuai dengan request"
+            ),
+        )
+
+    if item.source_type == "custom":
+        if item.commerce_ready:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Custom Creative Set "
+                    "memiliki status invalid"
+                ),
+            )
+
+        if (
+            set(
+                item.creative_product_ids
+                or []
+            )
+            != set(selected_product_ids)
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Produk Custom Creative "
+                    "Set telah berubah. Buat "
+                    "Creative Set ulang."
+                ),
+            )
+
+        item.status = "internal_render"
+        item.updated_at = now()
+        db.flush()
+
+        return item
+
+    # B19D_STALE_RENDER_GUARD
+    b19d_reconcile_catalog_drift(
+        db,
+        [item.catalog_code]
+        if item.catalog_code
+        else None,
+    )
+
+    db.refresh(item)
+
+    if item.drift_status == "stale":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                item.drift_reason
+                or (
+                    "Creative Set stale. "
+                    "Apply Catalog ulang."
+                )
+            ),
+        )
+
+    if (
+        not item.commerce_ready
+        or item.status
+        not in {
+            "ready",
+            "rendering",
+            "rendered",
+            "approved",
+        }
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Creative Set {code} "
+                "belum commerce-ready"
+            ),
+        )
+
+    if (
+        item.catalog_code
+        != wabot_normalize_code(
+            payload.catalog_code
+        )
+        or item.catalog_hash
+        != payload.catalog_hash
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Creative Set tidak lagi "
+                "sesuai dengan Mini Catalog. "
+                "Refresh dan Apply ulang."
+            ),
+        )
+
+    if (
+        set(
+            item.commerce_product_ids
+            or []
+        )
+        != set(selected_product_ids)
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Anggota Creative Set tidak "
+                "sama dengan Mini Catalog"
+            ),
+        )
+
+    item.creative_product_ids = (
+        selected_product_ids
+    )
+
+    item.raw_asset_ids = (
+        b19c_asset_ids(payload)
+    )
+
+    item.status = "rendering"
+    item.updated_at = now()
+    db.flush()
+
+    return item
+
+
+def b19c_campaign_guard(
+    campaign: CreativeCampaign,
+) -> dict[str, Any]:
+    settings = (
+        campaign.settings
+        or {}
+    )
+
+    source = settings.get(
+        "catalog_source"
+    )
+
+    code = settings.get(
+        "creative_set_code"
+    )
+
+    commerce_ready = bool(
+        settings.get(
+            "creative_set_commerce_ready"
+        )
+    )
+
+    if (
+        source != "spacecraft"
+        or not code
+        or not commerce_ready
+        or not settings.get(
+            "catalog_code"
+        )
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Campaign belum terhubung "
+                "ke Linked Creative Set "
+                "commerce-ready. WABot, "
+                "/go/CATxxx, dan attribution "
+                "dikunci."
+            ),
+        )
+
+    return settings
+
+
+@router.post(
+    "/api/creative-sets/prepare"
+)
+def prepare_creative_set(
+    request: CreativeSetPrepareRequest,
+    db: Session = Depends(get_db),
+):
+    item = b19c_prepare(
+        request,
+        db,
+    )
+
+    return {
+        "ok": True,
+        "creative_set":
+            b19c_to_dict(item),
+    }
+
+
+@router.get(
+    "/api/creative-sets"
+)
+def list_creative_sets(
+    db: Session = Depends(get_db),
+):
+    items = list(
+        db.scalars(
+            select(
+                CreativeSet
+            ).order_by(
+                CreativeSet.id.desc()
+            )
+        ).all()
+    )
+
+    return {
+        "ok": True,
+        "count": len(items),
+        "creative_sets": [
+            b19c_to_dict(item)
+            for item in items
+        ],
+    }
+
+
+@router.get(
+    "/api/creative-sets/{creative_set_code}"
+)
+def get_creative_set(
+    creative_set_code: str,
+    db: Session = Depends(get_db),
+):
+    code = wabot_normalize_code(
+        creative_set_code
+    )
+
+    item = db.scalar(
+        select(
+            CreativeSet
+        ).where(
+            CreativeSet
+            .creative_set_code
+            == code
+        )
+    )
+
+    if item is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Creative Set tidak ditemukan"
+            ),
+        )
+
+    return {
+        "ok": True,
+        "creative_set":
+            b19c_to_dict(item),
+    }
+
+
+
+
+# B19D_CATALOG_DRIFT_API
+def b19d_catalog_diff_reason(
+    item: CreativeSet,
+    catalog: SpacecraftCatalogCache | None,
+    current_product_ids: list[int],
+) -> str:
+    if catalog is None:
+        return (
+            f"Mini Catalog {item.catalog_code or '-'} "
+            "tidak lagi tersedia di cache."
+        )
+
+    old_ids = [
+        int(value)
+        for value in (
+            item.commerce_product_ids or []
+        )
+    ]
+
+    additions = sorted(
+        set(current_product_ids) - set(old_ids)
+    )
+
+    removals = sorted(
+        set(old_ids) - set(current_product_ids)
+    )
+
+    reasons: list[str] = []
+
+    if item.catalog_hash != catalog.catalog_hash:
+        reasons.append("snapshot hash berbeda")
+
+    if additions:
+        reasons.append(
+            "produk ditambahkan: "
+            + ", ".join(
+                str(value)
+                for value in additions[:10]
+            )
+        )
+
+    if removals:
+        reasons.append(
+            "produk dihapus: "
+            + ", ".join(
+                str(value)
+                for value in removals[:10]
+            )
+        )
+
+    if catalog.status != "published":
+        reasons.append(
+            f"status catalog menjadi {catalog.status}"
+        )
+
+    if not reasons:
+        reasons.append(
+            "metadata atau urutan commerce berubah"
+        )
+
+    return (
+        f"{item.catalog_code}: "
+        + "; ".join(reasons)
+        + ". Apply Catalog ulang untuk "
+        "membuat snapshot terbaru."
+    )
+
+
+def b19d_reconcile_catalog_drift(
+    db: Session,
+    catalog_codes: list[str] | None = None,
+) -> dict[str, Any]:
+    query = select(CreativeSet).where(
+        CreativeSet.source_type == "spacecraft"
+    )
+
+    if catalog_codes:
+        normalized = [
+            wabot_normalize_code(value)
+            for value in catalog_codes
+            if wabot_normalize_code(value)
+        ]
+
+        query = query.where(
+            CreativeSet.catalog_code.in_(normalized)
+        )
+
+    items = list(db.scalars(query).all())
+    stale: list[dict[str, Any]] = []
+    current: list[dict[str, Any]] = []
+
+    for item in items:
+        catalog = db.scalar(
+            select(SpacecraftCatalogCache).where(
+                SpacecraftCatalogCache.catalog_code
+                == item.catalog_code
+            )
+        )
+
+        rows = (
+            b19a_catalog_rows(db, catalog.id)
+            if catalog is not None
+            else []
+        )
+
+        current_ids = [
+            int(row.local_product_id)
+            for row in rows
+            if row.local_product_id
+        ]
+
+        item.drift_checked_at = now()
+        item.current_catalog_hash = (
+            catalog.catalog_hash
+            if catalog is not None
+            else None
+        )
+
+        hash_match = bool(
+            catalog is not None
+            and item.catalog_hash == catalog.catalog_hash
+            and catalog.status == "published"
+        )
+
+        membership_match = (
+            set(item.commerce_product_ids or [])
+            == set(current_ids)
+        )
+
+        if hash_match and membership_match:
+            if item.drift_status != "stale":
+                item.drift_status = "current"
+                item.drift_reason = None
+                item.drift_detected_at = None
+
+            current.append({
+                "creative_set_code":
+                    item.creative_set_code,
+                "catalog_code":
+                    item.catalog_code,
+                "catalog_hash":
+                    item.catalog_hash,
+            })
+            continue
+
+        item.drift_status = "stale"
+        item.status = "stale"
+        item.commerce_ready = False
+
+        if item.drift_detected_at is None:
+            item.drift_detected_at = now()
+
+        item.drift_reason = b19d_catalog_diff_reason(
+            item,
+            catalog,
+            current_ids,
+        )
+
+        stale.append({
+            "creative_set_code":
+                item.creative_set_code,
+            "catalog_code":
+                item.catalog_code,
+            "snapshot_hash":
+                item.catalog_hash,
+            "current_catalog_hash":
+                item.current_catalog_hash,
+            "reason":
+                item.drift_reason,
+        })
+
+    db.flush()
+
+    return {
+        "checked": len(items),
+        "stale_count": len(stale),
+        "current_count": len(current),
+        "stale": stale,
+        "current": current,
+        "checked_at": now().isoformat(),
+    }
+
+
+@router.post("/api/creative-sets/drift/check")
+def check_all_creative_set_drift(
+    db: Session = Depends(get_db),
+):
+    result = b19d_reconcile_catalog_drift(db)
+    db.commit()
+
+    return {
+        "ok": True,
+        "drift": result,
+    }
+
+
+@router.get(
+    "/api/creative-sets/"
+    "{creative_set_code}/drift"
+)
+def get_creative_set_drift(
+    creative_set_code: str,
+    db: Session = Depends(get_db),
+):
+    code = wabot_normalize_code(
+        creative_set_code
+    )
+
+    item = db.scalar(
+        select(CreativeSet).where(
+            CreativeSet.creative_set_code == code
+        )
+    )
+
+    if item is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Creative Set tidak ditemukan",
+        )
+
+    result = b19d_reconcile_catalog_drift(
+        db,
+        [item.catalog_code]
+        if item.catalog_code
+        else None,
+    )
+
+    db.commit()
+    db.refresh(item)
+
+    return {
+        "ok": True,
+        "creative_set": b19c_to_dict(item),
+        "drift": result,
+    }
+
+
+
+# B16 ADS ATTRIBUTION BRIDGE
+class B16WhatsAppClickRequest(BaseModel):
+    campaign_code: str | None = Field(
+        default=None,
+        max_length=150,
+    )
+
+    catalog_code: str | None = Field(
+        default=None,
+        max_length=100,
+    )
+
+    source_code: str | None = Field(
+        default="spacecraft_ads",
+        max_length=100,
+    )
+
+    creative_code: str | None = Field(
+        default=None,
+        max_length=180,
+    )
+
+    phone: str | None = Field(
+        default=None,
+        max_length=50,
+    )
+
+    opening_message: str | None = Field(
+        default=None,
+        max_length=3000,
+    )
+
+    destination_url: str | None = Field(
+        default=None,
+        max_length=4000,
+    )
+
+
+class WABotEventRequest(BaseModel):
+    event_type: Literal[
+        "lead",
+        "conversation",
+        "product_selected",
+        "shipping_checked",
+        "checkout",
+        "paid",
+        "closing",
+        "cancelled",
+    ]
+
+    phone: str | None = Field(
+        default=None,
+        max_length=50,
+    )
+
+    order_id: str | None = Field(
+        default=None,
+        max_length=150,
+    )
+
+    catalog_code: str | None = Field(
+        default=None,
+        max_length=100,
+    )
+
+    source_code: str | None = Field(
+        default=None,
+        max_length=100,
+    )
+
+    value: float = Field(
+        default=0,
+        ge=0,
+    )
+
+    payload: dict[str, Any] = Field(
+        default_factory=dict,
+    )
+
 
 
 
@@ -1164,6 +4957,1637 @@ def automation_send_webhook(
                 "campaign_id"
             ),
         )
+
+
+
+
+
+def wabot_campaign_key(
+    campaign_id: int,
+) -> str:
+    return (
+        f"{WABOT_CAMPAIGN_PREFIX}"
+        f"{campaign_id}"
+    )
+
+
+def wabot_event_key(
+    campaign_id: int,
+) -> str:
+    return (
+        f"{WABOT_EVENT_PREFIX}"
+        f"{campaign_id}"
+    )
+
+
+def wabot_normalize_code(
+    value: Any,
+    fallback: str = "",
+) -> str:
+    text = re.sub(
+        r"[^A-Za-z0-9_-]+",
+        "-",
+        str(value or "").strip(),
+    ).strip("-")
+
+    return text[:150] or fallback
+
+
+def wabot_normalize_phone(
+    value: Any,
+) -> str:
+    phone = re.sub(
+        r"[^0-9]+",
+        "",
+        str(value or ""),
+    )
+
+    if phone.startswith("0"):
+        phone = "62" + phone[1:]
+
+    return phone[:30]
+
+
+def wabot_load_config(
+    campaign_id: int,
+) -> dict[str, Any]:
+    raw = redis_connection().get(
+        wabot_campaign_key(campaign_id)
+    )
+
+    if not raw:
+        return {}
+
+    try:
+        parsed = json.loads(
+            automation_decode(raw)
+        )
+    except json.JSONDecodeError:
+        return {}
+
+    return (
+        parsed
+        if isinstance(parsed, dict)
+        else {}
+    )
+
+
+def wabot_save_config(
+    campaign_id: int,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    config = {
+        **payload,
+        "updated_at": now().isoformat(),
+    }
+
+    redis_connection().set(
+        wabot_campaign_key(campaign_id),
+        json.dumps(
+            config,
+            ensure_ascii=False,
+        ),
+    )
+
+    return config
+
+
+def wabot_campaign_payload(
+    campaign: CreativeCampaign,
+    jobs: list[RenderJob],
+    saved_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    config = (
+        saved_config
+        if isinstance(saved_config, dict)
+        else {}
+    )
+
+    settings = (
+        campaign.settings
+        if isinstance(campaign.settings, dict)
+        else {}
+    )
+
+    ad_copy = b11_campaign_copy(
+        campaign,
+        jobs,
+    )
+
+    campaign_code = (
+        wabot_normalize_code(
+            config.get(
+                "external_campaign_code"
+            )
+        )
+        or b11_campaign_code(campaign)
+    )
+
+    catalog_code = wabot_normalize_code(
+        config.get("catalog_code")
+        or settings.get("catalog_code")
+        or settings.get("catalog_bundle_code")
+        or "",
+    )
+
+    source_code = wabot_normalize_code(
+        config.get("source_code")
+        or settings.get("source_code")
+        or "spacecraft_ads",
+        "spacecraft_ads",
+    )
+
+    product_ids = [
+        int(item)
+        for item in (
+            settings.get("product_ids")
+            or []
+        )
+        if str(item).isdigit()
+    ]
+
+    product_names = [
+        b11_clean_text(item)
+        for item in (
+            settings.get("product_names")
+            or ad_copy.get("products")
+            or []
+        )
+        if b11_clean_text(item)
+    ]
+
+    opening_message = b11_clean_text(
+        config.get("opening_message")
+        or ad_copy.get("whatsapp_opening")
+    )
+
+    attribution = {
+        "source_code": source_code,
+        "campaign_code": campaign_code,
+        "catalog_code": (
+            catalog_code or None
+        ),
+        "creative_campaign_id":
+            campaign.id,
+        "creative_code": (
+            f"{campaign_code}-MASTER"
+        ),
+        "platform": "spacecraft_ads",
+    }
+
+    return {
+        "version": "b16",
+        "event": "campaign_lead",
+        "campaign": {
+            "id": campaign.id,
+            "code": campaign_code,
+            "name": campaign.name,
+            "status": campaign.status,
+            "catalog_code":
+                catalog_code or None,
+            "source_code": source_code,
+        },
+        "products": {
+            "ids": product_ids,
+            "names": product_names,
+            "count": len(product_names),
+        },
+        "offer": {
+            "promo":
+                ad_copy.get("promo"),
+            "cta":
+                ad_copy.get(
+                    "cta_recommendation"
+                ),
+            "opening_message":
+                opening_message,
+        },
+        "attribution": attribution,
+        "wabot": {
+            "phone":
+                wabot_normalize_phone(
+                    config.get(
+                        "whatsapp_number"
+                    )
+                )
+                or None,
+            "webhook_enabled": bool(
+                config.get(
+                    "webhook_enabled"
+                )
+            ),
+            "configured": bool(
+                WABOT_BASE_URL
+            ),
+        },
+        "metadata": (
+            config.get("metadata")
+            if isinstance(
+                config.get("metadata"),
+                dict,
+            )
+            else {}
+        ),
+        "generated_at": now().isoformat(),
+    }
+
+
+def wabot_write_event(
+    campaign_id: int,
+    event: dict[str, Any],
+) -> dict[str, Any]:
+    record = {
+        **event,
+        "id": uuid.uuid4().hex,
+        "campaign_id": campaign_id,
+        "created_at": now().isoformat(),
+    }
+
+    client = redis_connection()
+
+    client.lpush(
+        wabot_event_key(campaign_id),
+        json.dumps(
+            record,
+            ensure_ascii=False,
+        ),
+    )
+
+    client.ltrim(
+        wabot_event_key(campaign_id),
+        0,
+        WABOT_EVENT_LIMIT - 1,
+    )
+
+    return record
+
+
+def wabot_read_events(
+    campaign_id: int,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    raw_items = redis_connection().lrange(
+        wabot_event_key(campaign_id),
+        0,
+        max(0, min(limit, 500) - 1),
+    )
+
+    result: list[dict[str, Any]] = []
+
+    for raw in raw_items:
+        try:
+            parsed = json.loads(
+                automation_decode(raw)
+            )
+        except json.JSONDecodeError:
+            continue
+
+        if isinstance(parsed, dict):
+            result.append(parsed)
+
+    return result
+
+
+def wabot_event_summary(
+    events: list[dict[str, Any]],
+) -> dict[str, Any]:
+    counts: dict[str, int] = {}
+    total_value = 0.0
+
+    for event in events:
+        event_type = str(
+            event.get("event_type")
+            or "unknown"
+        )
+
+        counts[event_type] = (
+            counts.get(event_type, 0)
+            + 1
+        )
+
+        try:
+            total_value += float(
+                event.get("value")
+                or 0
+            )
+        except (TypeError, ValueError):
+            pass
+
+    return {
+        "total_events": len(events),
+        "counts": counts,
+        "total_value": round(
+            total_value,
+            2,
+        ),
+    }
+
+
+
+def b11_slugify(
+    value: Any,
+    fallback: str = "campaign",
+) -> str:
+    text = str(value or "").strip().lower()
+
+    text = re.sub(
+        r"[^a-z0-9]+",
+        "-",
+        text,
+    ).strip("-")
+
+    return text[:80] or fallback
+
+
+# B18J_DESCRIPTIVE_EXPORT_FILENAMES
+def b18j_campaign_asset_filename(
+    campaign: CreativeCampaign,
+    variation_index: int,
+    extension: str,
+    *,
+    kind: str = "video",
+    approved: bool = True,
+    winner: bool = False,
+) -> str:
+    suffix = str(extension or "").strip().lower()
+
+    if not suffix.startswith("."):
+        suffix = f".{suffix}"
+
+    if not re.fullmatch(r"\.[a-z0-9]{2,6}", suffix):
+        suffix = ".mp4" if kind == "video" else ".jpg"
+
+    parts = [
+        "spacecraft",
+        b11_campaign_code(campaign),
+        b11_slugify(campaign.name, "campaign")[:40],
+        f"v{int(variation_index):02d}",
+    ]
+
+    if approved:
+        parts.append("approved")
+
+    if winner:
+        parts.append("winner")
+
+    if kind == "thumbnail":
+        parts.append("thumbnail")
+
+    return "-".join(parts) + suffix
+
+
+def b11_clean_text(
+    value: Any,
+) -> str:
+    return re.sub(
+        r"\s+",
+        " ",
+        str(value or "").strip(),
+    )
+
+
+def b11_campaign_code(
+    campaign: CreativeCampaign,
+) -> str:
+    return f"CMP{campaign.id:06d}"
+
+
+def b11_campaign_copy(
+    campaign: CreativeCampaign,
+    jobs: list[RenderJob],
+) -> dict[str, Any]:
+    settings = (
+        campaign.settings
+        if isinstance(campaign.settings, dict)
+        else {}
+    )
+
+    product_names = [
+        b11_clean_text(item)
+        for item in (
+            settings.get("product_names")
+            or []
+        )
+        if b11_clean_text(item)
+    ]
+
+    if not product_names:
+        product_names = [
+            b11_clean_text(
+                settings.get("product_name")
+                or campaign.name
+            )
+        ]
+
+    product_label = ", ".join(
+        product_names[:6]
+    )
+
+    template_label = b11_clean_text(
+        settings.get(
+            "creative_template_label"
+        )
+        or settings.get(
+            "creative_template"
+        )
+        or "Product Showcase"
+    )
+
+    audience = b11_clean_text(
+        settings.get("audience")
+        or "retail"
+    )
+
+    promo_text = b11_clean_text(
+        settings.get("promo_text")
+    )
+
+    promo_min_amount = settings.get(
+        "promo_min_amount"
+    )
+
+    promo_discount = settings.get(
+        "promo_discount_percent"
+    )
+
+    promo_parts: list[str] = []
+
+    if promo_text:
+        promo_parts.append(promo_text)
+
+    if promo_discount:
+        promo_parts.append(
+            f"Diskon {promo_discount}%"
+        )
+
+    if promo_min_amount:
+        try:
+            amount = int(
+                float(promo_min_amount)
+            )
+
+            promo_parts.append(
+                "minimal belanja "
+                f"Rp{amount:,.0f}"
+                .replace(",", ".")
+            )
+        except (TypeError, ValueError):
+            pass
+
+    promo_label = ", ".join(
+        promo_parts
+    )
+
+    completed_jobs = [
+        job
+        for job in jobs
+        if job.status == "completed"
+    ]
+
+    hook_candidates: list[str] = []
+    cta_candidates: list[str] = []
+
+    for job in completed_jobs:
+        config = (
+            job.config
+            if isinstance(job.config, dict)
+            else {}
+        )
+
+        hook = b11_clean_text(
+            config.get("hook")
+        )
+
+        cta = b11_clean_text(
+            config.get("cta")
+        )
+
+        if (
+            hook
+            and hook not in hook_candidates
+        ):
+            hook_candidates.append(hook)
+
+        if (
+            cta
+            and cta not in cta_candidates
+        ):
+            cta_candidates.append(cta)
+
+    default_hook = (
+        hook_candidates[0]
+        if hook_candidates
+        else (
+            f"Lagi cari pilihan {product_label} "
+            "yang unik dan menarik?"
+        )
+    )
+
+    default_cta = (
+        cta_candidates[0]
+        if cta_candidates
+        else "Pesan sekarang melalui WhatsApp."
+    )
+
+    promo_sentence = (
+        f" Nikmati {promo_label}."
+        if promo_label
+        else ""
+    )
+
+    primary_texts = [
+        (
+            f"{default_hook} "
+            f"Temukan {product_label} dalam satu "
+            f"pilihan {template_label.lower()}."
+            f"{promo_sentence} {default_cta}"
+        ),
+        (
+            f"Bikin pilihan produk jadi lebih praktis. "
+            f"{product_label} siap untuk kebutuhanmu."
+            f"{promo_sentence} Klik dan pesan sekarang "
+            "sebelum kehabisan."
+        ),
+        (
+            f"Pilihan menarik untuk kamu yang mencari "
+            f"{product_label}. Cocok untuk audience "
+            f"{audience.replace('_', ' ')}."
+            f"{promo_sentence} Hubungi kami melalui "
+            "WhatsApp untuk detail dan pemesanan."
+        ),
+    ]
+
+    headlines = [
+        f"{product_names[0]} Pilihan SpaceCraft",
+        f"Promo {template_label}",
+        "Pesan Mudah via WhatsApp",
+        "Pilihan Produk Unik Hari Ini",
+        (
+            f"Diskon {promo_discount}% Sekarang"
+            if promo_discount
+            else "Lihat Koleksi Terbaru"
+        ),
+    ]
+
+    descriptions = [
+        (
+            f"Temukan {product_label} dan pesan "
+            "langsung melalui WhatsApp."
+        ),
+        (
+            f"{template_label} dengan pilihan produk "
+            "yang menarik dan siap dipesan."
+        ),
+        (
+            (
+                f"{promo_label.capitalize()}. "
+                if promo_label
+                else ""
+            )
+            + "Stok terbatas, cek detail sekarang."
+        ),
+    ]
+
+    whatsapp_opening = (
+        "Halo SpaceCraft, saya tertarik dengan "
+        f"campaign {b11_campaign_code(campaign)} "
+        f"untuk produk {product_label}. "
+        "Boleh minta informasi harga, stok, "
+        "dan cara pemesanannya?"
+    )
+
+    return {
+        "campaign_code":
+            b11_campaign_code(campaign),
+        "campaign_name": campaign.name,
+        "template": template_label,
+        "audience": audience,
+        "products": product_names,
+        "promo": promo_label or None,
+        "primary_texts": [
+            b11_clean_text(item)
+            for item in primary_texts
+        ],
+        "headlines": [
+            b11_clean_text(item)
+            for item in headlines
+        ],
+        "descriptions": [
+            b11_clean_text(item)
+            for item in descriptions
+        ],
+        "cta_recommendation":
+            "Kirim Pesan WhatsApp",
+        "whatsapp_opening":
+            whatsapp_opening,
+        "generated_at": now().isoformat(),
+    }
+
+
+def b11_campaign_export_manifest(
+    campaign: CreativeCampaign,
+    jobs: list[RenderJob],
+    ad_copy: dict[str, Any],
+) -> dict[str, Any]:
+    approved_jobs: list[
+        dict[str, Any]
+    ] = []
+
+    for job in jobs:
+        config = (
+            job.config
+            if isinstance(job.config, dict)
+            else {}
+        )
+
+        review = normalize_render_review(
+            config.get("review")
+        )
+
+        if (
+            job.status != "completed"
+            or review.get("status")
+                != "approved"
+        ):
+            continue
+
+        approved_jobs.append({
+            "job_id": job.id,
+            "variation_index":
+                job.variation_index,
+            "winner": bool(
+                review.get("winner")
+            ),
+            "rating": review.get("rating"),
+            "review_notes":
+                review.get("notes"),
+            "output_path": job.output_path,
+            "thumbnail_path":
+                config.get("thumbnail_path"),
+            "qa": config.get("qa"),
+            "hook": config.get("hook"),
+            "cta": config.get("cta"),
+            "export_preset":
+                config.get("export_preset"),
+            "aspect_ratio":
+                config.get("aspect_ratio"),
+        })
+
+    return {
+        "version": "b11",
+        "campaign": campaign_to_dict(
+            campaign
+        ),
+        "ad_copy": ad_copy,
+        "approved_assets": approved_jobs,
+        "approved_count":
+            len(approved_jobs),
+        "created_at": now().isoformat(),
+    }
+
+
+def b11_build_export_package(
+    campaign: CreativeCampaign,
+    jobs: list[RenderJob],
+) -> dict[str, Any]:
+    ad_copy = b11_campaign_copy(
+        campaign,
+        jobs,
+    )
+
+    manifest = (
+        b11_campaign_export_manifest(
+            campaign,
+            jobs,
+            ad_copy,
+        )
+    )
+
+    approved_assets = manifest[
+        "approved_assets"
+    ]
+
+    if not approved_assets:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Belum ada video Approved. "
+                "Set status minimal satu video "
+                "menjadi Approved sebelum export."
+            ),
+        )
+
+    campaign_code = ad_copy[
+        "campaign_code"
+    ]
+
+    folder_slug = b11_slugify(
+        campaign.name
+    )
+
+    export_dir = (
+        STORAGE_ROOT
+        / "campaign-exports"
+        / f"campaign-{campaign.id}"
+    )
+
+    export_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    package_name = (
+        "spacecraft-"
+        f"{campaign_code}-"
+        f"{folder_slug}-"
+        "approved-"
+        f"{now().strftime('%Y%m%d-%H%M%S')}"
+        ".zip"
+    )
+
+    package_path = export_dir / package_name
+
+    qa_report = {
+        "campaign_code": campaign_code,
+        "campaign_id": campaign.id,
+        "campaign_name": campaign.name,
+        "approved_count":
+            len(approved_assets),
+        "jobs": [
+            {
+                "job_id": item["job_id"],
+                "variation_index":
+                    item["variation_index"],
+                "winner": item["winner"],
+                "rating": item["rating"],
+                "qa": item["qa"],
+            }
+            for item in approved_assets
+        ],
+        "generated_at": now().isoformat(),
+    }
+
+    copy_lines = [
+        f"CAMPAIGN CODE: {campaign_code}",
+        f"CAMPAIGN: {campaign.name}",
+        "",
+        "PRIMARY TEXT",
+    ]
+
+    for index, text in enumerate(
+        ad_copy["primary_texts"],
+        start=1,
+    ):
+        copy_lines.extend([
+            f"{index}. {text}",
+            "",
+        ])
+
+    copy_lines.append("HEADLINES")
+
+    for index, text in enumerate(
+        ad_copy["headlines"],
+        start=1,
+    ):
+        copy_lines.append(
+            f"{index}. {text}"
+        )
+
+    copy_lines.extend([
+        "",
+        "DESCRIPTIONS",
+    ])
+
+    for index, text in enumerate(
+        ad_copy["descriptions"],
+        start=1,
+    ):
+        copy_lines.append(
+            f"{index}. {text}"
+        )
+
+    copy_lines.extend([
+        "",
+        "CTA RECOMMENDATION",
+        ad_copy["cta_recommendation"],
+        "",
+        "WHATSAPP OPENING",
+        ad_copy["whatsapp_opening"],
+        "",
+    ])
+
+    with zipfile.ZipFile(
+        package_path,
+        mode="w",
+        compression=zipfile.ZIP_DEFLATED,
+        compresslevel=6,
+    ) as archive:
+        root_name = (
+            "spacecraft-"
+            f"{campaign_code}-"
+            f"{folder_slug}"
+        )
+
+        archive.writestr(
+            f"{root_name}/ad-copy.txt",
+            "\n".join(copy_lines),
+        )
+
+        archive.writestr(
+            f"{root_name}/campaign-manifest.json",
+            json.dumps(
+                manifest,
+                ensure_ascii=False,
+                indent=2,
+            ),
+        )
+
+        archive.writestr(
+            f"{root_name}/qa-report.json",
+            json.dumps(
+                qa_report,
+                ensure_ascii=False,
+                indent=2,
+            ),
+        )
+
+        for item in approved_assets:
+            variation = int(
+                item["variation_index"]
+            )
+
+            winner_suffix = (
+                "-winner"
+                if item["winner"]
+                else ""
+            )
+
+            video_relative = str(
+                item.get("output_path")
+                or ""
+            ).strip()
+
+            if video_relative:
+                video_path = (
+                    STORAGE_ROOT
+                    / video_relative
+                )
+
+                try:
+                    video_path.resolve().relative_to(
+                        STORAGE_ROOT.resolve()
+                    )
+                except ValueError:
+                    video_path = Path(
+                        "/invalid"
+                    )
+
+                if video_path.is_file():
+                    extension = (
+                        video_path.suffix
+                        or ".mp4"
+                    )
+
+                    archive.write(
+                        video_path,
+                        (
+                            f"{root_name}/videos/"
+                            + b18j_campaign_asset_filename(
+                                campaign,
+                                variation,
+                                extension,
+                                kind="video",
+                                approved=True,
+                                winner=bool(item["winner"]),
+                            )
+                        ),
+                    )
+
+            thumbnail_relative = str(
+                item.get("thumbnail_path")
+                or ""
+            ).strip()
+
+            if thumbnail_relative:
+                thumbnail_path = (
+                    STORAGE_ROOT
+                    / thumbnail_relative
+                )
+
+                try:
+                    thumbnail_path.resolve().relative_to(
+                        STORAGE_ROOT.resolve()
+                    )
+                except ValueError:
+                    thumbnail_path = Path(
+                        "/invalid"
+                    )
+
+                if thumbnail_path.is_file():
+                    extension = (
+                        thumbnail_path.suffix
+                        or ".jpg"
+                    )
+
+                    archive.write(
+                        thumbnail_path,
+                        (
+                            f"{root_name}/thumbnails/"
+                            + b18j_campaign_asset_filename(
+                                campaign,
+                                variation,
+                                extension,
+                                kind="thumbnail",
+                                approved=True,
+                                winner=bool(item["winner"]),
+                            )
+                        ),
+                    )
+
+    relative_path = (
+        package_path
+        .relative_to(STORAGE_ROOT)
+        .as_posix()
+    )
+
+    return {
+        "campaign_code": campaign_code,
+        "package_name": package_name,
+        "package_path": relative_path,
+        "package_url":
+            f"/media/{relative_path}",
+        "approved_count":
+            len(approved_assets),
+        "size_bytes":
+            package_path.stat().st_size,
+        "manifest": manifest,
+        "ad_copy": ad_copy,
+    }
+
+
+
+
+def performance_key(
+    campaign_id: int,
+    job_id: int,
+) -> str:
+    return (
+        f"{PERFORMANCE_KEY_PREFIX}"
+        f"{campaign_id}:{job_id}"
+    )
+
+
+def performance_campaign_set_key(
+    campaign_id: int,
+) -> str:
+    return (
+        f"{PERFORMANCE_CAMPAIGN_SET_PREFIX}"
+        f"{campaign_id}"
+    )
+
+
+def performance_number(
+    value: Any,
+    default: float = 0,
+) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def performance_int(
+    value: Any,
+    default: int = 0,
+) -> int:
+    try:
+        return int(
+            float(value)
+        )
+    except (TypeError, ValueError):
+        return default
+
+
+def performance_calculate(
+    raw: dict[str, Any] | None,
+) -> dict[str, Any]:
+    source = (
+        raw
+        if isinstance(raw, dict)
+        else {}
+    )
+
+    impressions = max(
+        0,
+        performance_int(
+            source.get("impressions")
+        ),
+    )
+
+    clicks = max(
+        0,
+        performance_int(
+            source.get("clicks")
+        ),
+    )
+
+    spend = max(
+        0.0,
+        performance_number(
+            source.get("spend")
+        ),
+    )
+
+    leads = max(
+        0,
+        performance_int(
+            source.get("leads")
+        ),
+    )
+
+    closings = max(
+        0,
+        performance_int(
+            source.get("closings")
+        ),
+    )
+
+    revenue = max(
+        0.0,
+        performance_number(
+            source.get("revenue")
+        ),
+    )
+
+    ctr = (
+        clicks / impressions * 100
+        if impressions
+        else 0
+    )
+
+    cpm = (
+        spend / impressions * 1000
+        if impressions
+        else 0
+    )
+
+    cpc = (
+        spend / clicks
+        if clicks
+        else 0
+    )
+
+    cpl = (
+        spend / leads
+        if leads
+        else 0
+    )
+
+    lead_conversion = (
+        leads / clicks * 100
+        if clicks
+        else 0
+    )
+
+    closing_conversion = (
+        closings / leads * 100
+        if leads
+        else 0
+    )
+
+    roas = (
+        revenue / spend
+        if spend
+        else 0
+    )
+
+    profit = revenue - spend
+
+    score = (
+        min(ctr, 10) * 8
+        + min(roas, 10) * 15
+        + min(
+            closing_conversion,
+            100,
+        ) * 0.45
+        + min(closings, 20) * 4
+    )
+
+    if impressions < 500:
+        recommendation = "keep_testing"
+        recommendation_label = (
+            "Keep Testing"
+        )
+        recommendation_reason = (
+            "Data belum cukup. Tambahkan "
+            "impressions sebelum mengambil keputusan."
+        )
+
+    elif (
+        roas >= 3
+        and closings >= 2
+    ):
+        recommendation = "scale"
+        recommendation_label = "Scale"
+        recommendation_reason = (
+            "ROAS dan closing kuat. "
+            "Layak menaikkan budget bertahap."
+        )
+
+    elif (
+        ctr >= 1.5
+        and leads > 0
+        and closings == 0
+    ):
+        recommendation = "revise"
+        recommendation_label = "Revise"
+        recommendation_reason = (
+            "Creative menarik klik, tetapi belum "
+            "menghasilkan closing. Periksa offer, "
+            "landing flow, atau follow-up WhatsApp."
+        )
+
+    elif (
+        impressions >= 1500
+        and (
+            ctr < 0.7
+            or (
+                spend > 0
+                and roas < 1
+            )
+        )
+    ):
+        recommendation = "stop"
+        recommendation_label = "Stop"
+        recommendation_reason = (
+            "Performa lemah setelah data cukup. "
+            "Hentikan atau ganti hook dan creative."
+        )
+
+    else:
+        recommendation = "keep_testing"
+        recommendation_label = (
+            "Keep Testing"
+        )
+        recommendation_reason = (
+            "Performa belum cukup kuat untuk scale "
+            "atau stop. Lanjutkan pengujian."
+        )
+
+    return {
+        "impressions": impressions,
+        "clicks": clicks,
+        "spend": round(spend, 2),
+        "leads": leads,
+        "closings": closings,
+        "revenue": round(revenue, 2),
+        "ctr": round(ctr, 4),
+        "cpm": round(cpm, 2),
+        "cpc": round(cpc, 2),
+        "cpl": round(cpl, 2),
+        "lead_conversion": round(
+            lead_conversion,
+            4,
+        ),
+        "closing_conversion": round(
+            closing_conversion,
+            4,
+        ),
+        "roas": round(roas, 4),
+        "profit": round(profit, 2),
+        "score": round(score, 4),
+        "recommendation":
+            recommendation,
+        "recommendation_label":
+            recommendation_label,
+        "recommendation_reason":
+            recommendation_reason,
+        "notes": str(
+            source.get("notes")
+            or ""
+        ).strip(),
+        "source": str(
+            source.get("source")
+            or "manual"
+        ).strip(),
+        "updated_at":
+            source.get("updated_at"),
+    }
+
+
+def performance_load(
+    campaign_id: int,
+    job_id: int,
+) -> dict[str, Any]:
+    redis_client = redis_connection()
+
+    raw = redis_client.get(
+        performance_key(
+            campaign_id,
+            job_id,
+        )
+    )
+
+    if not raw:
+        return performance_calculate({})
+
+    try:
+        parsed = json.loads(
+            automation_decode(raw)
+        )
+    except json.JSONDecodeError:
+        parsed = {}
+
+    return performance_calculate(
+        parsed
+        if isinstance(parsed, dict)
+        else {}
+    )
+
+
+def performance_save(
+    campaign_id: int,
+    job_id: int,
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    redis_client = redis_connection()
+
+    calculated = performance_calculate(
+        {
+            **data,
+            "updated_at":
+                now().isoformat(),
+        }
+    )
+
+    redis_client.set(
+        performance_key(
+            campaign_id,
+            job_id,
+        ),
+        json.dumps(
+            calculated,
+            ensure_ascii=False,
+        ),
+    )
+
+    redis_client.sadd(
+        performance_campaign_set_key(
+            campaign_id
+        ),
+        str(job_id),
+    )
+
+    return calculated
+
+
+def performance_job_metadata(
+    job: RenderJob,
+) -> dict[str, Any]:
+    config = (
+        job.config
+        if isinstance(job.config, dict)
+        else {}
+    )
+
+    review = normalize_render_review(
+        config.get("review")
+    )
+
+    return {
+        "job_id": job.id,
+        "campaign_id":
+            job.campaign_id,
+        "variation_index":
+            job.variation_index,
+        "status": job.status,
+        "hook": str(
+            config.get("hook")
+            or ""
+        ).strip(),
+        "cta": str(
+            config.get("cta")
+            or ""
+        ).strip(),
+        "template": str(
+            config.get(
+                "creative_template_label"
+            )
+            or config.get(
+                "creative_template"
+            )
+            or "Custom"
+        ).strip(),
+        "export_preset":
+            config.get("export_preset"),
+        "review_status":
+            review.get("status"),
+        "review_rating":
+            review.get("rating"),
+        "review_winner":
+            review.get("winner"),
+        "thumbnail_url": (
+            f"/media/{config.get('thumbnail_path')}"
+            if config.get(
+                "thumbnail_path"
+            )
+            else None
+        ),
+        "output_url": (
+            f"/media/{job.output_path}"
+            if job.output_path
+            else None
+        ),
+    }
+
+
+def performance_campaign_dashboard(
+    campaign: CreativeCampaign,
+    jobs: list[RenderJob],
+) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+
+    for job in jobs:
+        metrics = performance_load(
+            campaign.id,
+            job.id,
+        )
+
+        items.append({
+            **performance_job_metadata(job),
+            "metrics": metrics,
+        })
+
+    ranked = sorted(
+        items,
+        key=lambda item: (
+            item["metrics"]["score"],
+            item["metrics"]["roas"],
+            item["metrics"]["closings"],
+            item["metrics"]["ctr"],
+        ),
+        reverse=True,
+    )
+
+    for index, item in enumerate(
+        ranked,
+        start=1,
+    ):
+        item["rank"] = index
+
+    totals = {
+        "impressions": sum(
+            item["metrics"]["impressions"]
+            for item in items
+        ),
+        "clicks": sum(
+            item["metrics"]["clicks"]
+            for item in items
+        ),
+        "spend": round(
+            sum(
+                item["metrics"]["spend"]
+                for item in items
+            ),
+            2,
+        ),
+        "leads": sum(
+            item["metrics"]["leads"]
+            for item in items
+        ),
+        "closings": sum(
+            item["metrics"]["closings"]
+            for item in items
+        ),
+        "revenue": round(
+            sum(
+                item["metrics"]["revenue"]
+                for item in items
+            ),
+            2,
+        ),
+    }
+
+    totals_calculated = (
+        performance_calculate(totals)
+    )
+
+    for key in (
+        "ctr",
+        "cpm",
+        "cpc",
+        "cpl",
+        "lead_conversion",
+        "closing_conversion",
+        "roas",
+        "profit",
+    ):
+        totals[key] = (
+            totals_calculated[key]
+        )
+
+    hook_stats: dict[
+        str,
+        list[float],
+    ] = {}
+
+    template_stats: dict[
+        str,
+        list[float],
+    ] = {}
+
+    cta_stats: dict[
+        str,
+        list[float],
+    ] = {}
+
+    for item in items:
+        score = item[
+            "metrics"
+        ]["score"]
+
+        hook = item.get("hook") or "-"
+        template = (
+            item.get("template") or "-"
+        )
+        cta = item.get("cta") or "-"
+
+        hook_stats.setdefault(
+            hook,
+            [],
+        ).append(score)
+
+        template_stats.setdefault(
+            template,
+            [],
+        ).append(score)
+
+        cta_stats.setdefault(
+            cta,
+            [],
+        ).append(score)
+
+    def aggregate_dimension(
+        source: dict[
+            str,
+            list[float],
+        ],
+    ) -> list[dict[str, Any]]:
+        values = [
+            {
+                "label": label,
+                "sample_count":
+                    len(scores),
+                "average_score": round(
+                    sum(scores)
+                    / len(scores),
+                    4,
+                ),
+            }
+            for label, scores
+            in source.items()
+        ]
+
+        values.sort(
+            key=lambda item:
+                item["average_score"],
+            reverse=True,
+        )
+
+        return values[:10]
+
+    performance_winner = (
+        ranked[0]
+        if ranked
+        and ranked[0][
+            "metrics"
+        ]["impressions"] > 0
+        else None
+    )
+
+    return {
+        "campaign": {
+            "id": campaign.id,
+            "name": campaign.name,
+            "status": campaign.status,
+            "campaign_code":
+                b11_campaign_code(
+                    campaign
+                ),
+        },
+        "totals": totals,
+        "items": ranked,
+        "performance_winner":
+            performance_winner,
+        "dimensions": {
+            "hooks":
+                aggregate_dimension(
+                    hook_stats
+                ),
+            "templates":
+                aggregate_dimension(
+                    template_stats
+                ),
+            "ctas":
+                aggregate_dimension(
+                    cta_stats
+                ),
+        },
+        "generated_at": now().isoformat(),
+    }
+
+
+def performance_campaign_csv(
+    dashboard: dict[str, Any],
+) -> str:
+    headers = [
+        "rank",
+        "campaign_id",
+        "job_id",
+        "variation",
+        "hook",
+        "template",
+        "cta",
+        "impressions",
+        "clicks",
+        "ctr_percent",
+        "spend",
+        "cpm",
+        "cpc",
+        "leads",
+        "cpl",
+        "closings",
+        "closing_conversion_percent",
+        "revenue",
+        "roas",
+        "profit",
+        "score",
+        "recommendation",
+        "notes",
+        "updated_at",
+    ]
+
+    def csv_cell(value: Any) -> str:
+        text = str(
+            value
+            if value is not None
+            else ""
+        )
+
+        return (
+            '"'
+            + text.replace('"', '""')
+            + '"'
+        )
+
+    rows = [
+        ",".join(headers)
+    ]
+
+    for item in dashboard["items"]:
+        metrics = item["metrics"]
+
+        values = [
+            item.get("rank"),
+            item.get("campaign_id"),
+            item.get("job_id"),
+            item.get(
+                "variation_index"
+            ),
+            item.get("hook"),
+            item.get("template"),
+            item.get("cta"),
+            metrics.get("impressions"),
+            metrics.get("clicks"),
+            metrics.get("ctr"),
+            metrics.get("spend"),
+            metrics.get("cpm"),
+            metrics.get("cpc"),
+            metrics.get("leads"),
+            metrics.get("cpl"),
+            metrics.get("closings"),
+            metrics.get(
+                "closing_conversion"
+            ),
+            metrics.get("revenue"),
+            metrics.get("roas"),
+            metrics.get("profit"),
+            metrics.get("score"),
+            metrics.get(
+                "recommendation_label"
+            ),
+            metrics.get("notes"),
+            metrics.get("updated_at"),
+        ]
+
+        rows.append(
+            ",".join(
+                csv_cell(value)
+                for value in values
+            )
+        )
+
+    return "\n".join(rows)
 
 
 
@@ -1969,6 +7393,296 @@ def limit_words(
 
     return shortened
 
+
+# VOICE_DRAFT_HELPERS_V1
+_ID_NUMBER_WORDS = (
+    "nol",
+    "satu",
+    "dua",
+    "tiga",
+    "empat",
+    "lima",
+    "enam",
+    "tujuh",
+    "delapan",
+    "sembilan",
+    "sepuluh",
+    "sebelas",
+)
+
+
+def indonesian_number_words(value: int) -> str:
+    number = int(value)
+
+    if number < 0:
+        return "minus " + indonesian_number_words(
+            abs(number)
+        )
+
+    if number < 12:
+        return _ID_NUMBER_WORDS[number]
+
+    if number < 20:
+        return (
+            indonesian_number_words(number - 10)
+            + " belas"
+        )
+
+    if number < 100:
+        tens, remainder = divmod(number, 10)
+        result = (
+            indonesian_number_words(tens)
+            + " puluh"
+        )
+        if remainder:
+            result += " " + indonesian_number_words(
+                remainder
+            )
+        return result
+
+    if number < 200:
+        remainder = number - 100
+        return (
+            "seratus"
+            + (
+                " " + indonesian_number_words(remainder)
+                if remainder
+                else ""
+            )
+        )
+
+    if number < 1000:
+        hundreds, remainder = divmod(number, 100)
+        result = (
+            indonesian_number_words(hundreds)
+            + " ratus"
+        )
+        if remainder:
+            result += " " + indonesian_number_words(
+                remainder
+            )
+        return result
+
+    if number < 2000:
+        remainder = number - 1000
+        return (
+            "seribu"
+            + (
+                " " + indonesian_number_words(remainder)
+                if remainder
+                else ""
+            )
+        )
+
+    units = (
+        (1_000_000_000_000, "triliun"),
+        (1_000_000_000, "miliar"),
+        (1_000_000, "juta"),
+        (1_000, "ribu"),
+    )
+
+    for divisor, label in units:
+        if number >= divisor:
+            quotient, remainder = divmod(
+                number,
+                divisor,
+            )
+            result = (
+                indonesian_number_words(quotient)
+                + " "
+                + label
+            )
+            if remainder:
+                result += (
+                    " "
+                    + indonesian_number_words(remainder)
+                )
+            return result
+
+    return str(number)
+
+
+def _parse_spoken_integer(value: str) -> int:
+    digits = re.sub(r"[^0-9]", "", value or "")
+    return int(digits or "0")
+
+
+def normalize_tts_text_indonesian(
+    value: str,
+    protected_terms: list[str] | None = None,
+) -> str:
+    result = str(value or "").strip()
+    protected_terms = protected_terms or []
+    replacements: dict[str, str] = {}
+
+    clean_terms = sorted(
+        {
+            str(item).strip()
+            for item in protected_terms
+            if str(item).strip()
+        },
+        key=len,
+        reverse=True,
+    )
+
+    for index, term in enumerate(clean_terms):
+        token = chr(0xE000 + index)
+        replacements[token] = term
+        result = result.replace(term, token)
+
+    def replace_rupiah(match: re.Match[str]) -> str:
+        amount = _parse_spoken_integer(
+            match.group(1)
+        )
+        return (
+            indonesian_number_words(amount)
+            + " rupiah"
+        )
+
+    def replace_percent(match: re.Match[str]) -> str:
+        amount = int(match.group(1))
+        return (
+            indonesian_number_words(amount)
+            + " persen"
+        )
+
+    def replace_piece(match: re.Match[str]) -> str:
+        amount = int(match.group(1))
+        return (
+            indonesian_number_words(amount)
+            + " buah"
+        )
+
+    result = re.sub(
+        r"(?i)\bRp\.?\s*([0-9][0-9.,]*)",
+        replace_rupiah,
+        result,
+    )
+    result = re.sub(
+        r"\b([0-9]+)\s*%",
+        replace_percent,
+        result,
+    )
+    result = re.sub(
+        r"(?i)\b([0-9]+)\s*(?:pcs?|pieces?)\b",
+        replace_piece,
+        result,
+    )
+    result = re.sub(
+        r"(?i)\bWA\b",
+        "WhatsApp",
+        result,
+    )
+    result = result.replace("&", " dan ")
+
+    result = re.sub(
+        r"(?<![\w])([0-9]+)(?![\w])",
+        lambda match: indonesian_number_words(
+            int(match.group(1))
+        ),
+        result,
+    )
+
+    result = re.sub(r"\s+", " ", result)
+    result = re.sub(r"\s+([,.;!?])", r"\1", result)
+
+    for token, term in replacements.items():
+        result = result.replace(token, term)
+
+    return result.strip()
+
+
+def join_exact_product_names(names: list[str]) -> str:
+    clean = [
+        str(item).strip()
+        for item in names
+        if str(item).strip()
+    ]
+
+    if not clean:
+        return "produk pilihan Spacecraft"
+
+    if len(clean) == 1:
+        return clean[0]
+
+    if len(clean) == 2:
+        return f"{clean[0]} dan {clean[1]}"
+
+    return (
+        ", ".join(clean[:-1])
+        + ", dan "
+        + clean[-1]
+    )
+
+
+def build_catalog_voiceover_draft(
+    products: list[Product],
+    audience: str,
+    duration_seconds: int,
+    promo_enabled: bool,
+    promo_min_amount: int,
+    promo_discount_percent: int,
+    promo_text: str | None,
+    compact: bool = False,
+) -> str:
+    exact_names = [item.name for item in products]
+    aliases = [compact_voice_product_alias(item.name) for item in products]
+
+    if compact:
+        product_sentence = join_exact_product_names(aliases)
+        script_parts = [
+            'Enam fidget unik bisa kamu pilih atau kombinasikan dalam satu pesanan.',
+            f'Ada {product_sentence}.',
+        ]
+    else:
+        product_sentence = join_exact_product_names(exact_names)
+        intro_by_audience = {
+            'reseller': 'Sedang mencari koleksi unik untuk menambah pilihan produk di tokomu?',
+            'custom_bulk': 'Butuh pilihan produk unik untuk merchandise atau pesanan dalam jumlah banyak?',
+            'retail_bulk': 'Lagi cari fidget unik yang seru dan bisa dikombinasikan dalam satu pesanan?',
+            'retail': 'Lagi cari fidget unik yang seru dan bikin rileks?',
+        }
+        script_parts = [
+            intro_by_audience.get(audience, intro_by_audience['retail']),
+            f'Kenalan dengan {product_sentence}.',
+        ]
+        if audience == 'reseller':
+            script_parts.append('Pilih koleksi yang paling cocok untuk katalog dan pelangganmu.')
+        elif audience == 'custom_bulk':
+            script_parts.append('Pilih beberapa item sesuai kebutuhan acara, komunitas, atau brand kamu.')
+        else:
+            script_parts.append('Pilih satu produk favoritmu, atau gabungkan beberapa item sekaligus.')
+
+    if promo_enabled:
+        custom_promo = (promo_text or '').strip()
+        if custom_promo:
+            normalized_custom_promo = normalize_tts_text_indonesian(
+                custom_promo,
+                exact_names + aliases,
+            ).strip()
+            if normalized_custom_promo and normalized_custom_promo[-1] not in '.!?':
+                normalized_custom_promo += '.'
+            script_parts.append(normalized_custom_promo)
+
+        if promo_min_amount > 0:
+            offer_sentence = (
+                'Belanja minimal '
+                + indonesian_number_words(promo_min_amount)
+                + ' rupiah dan dapatkan diskon '
+                + indonesian_number_words(promo_discount_percent)
+                + ' persen.'
+            )
+        else:
+            offer_sentence = (
+                'Dapatkan diskon '
+                + indonesian_number_words(promo_discount_percent)
+                + ' persen.'
+            )
+        script_parts.append(offer_sentence)
+
+    script_parts.append('Pesan sekarang melalui WhatsApp.')
+    draft = ' '.join(item.strip() for item in script_parts if item.strip())
+    return normalize_tts_text_indonesian(draft, exact_names + aliases)
 
 def build_voiceover_script(
     product: Product,
@@ -3562,35 +9276,32 @@ def prepare_voiceover(
     config: dict[str, Any],
     temp_dir: Path,
 ) -> Path | None:
-    voiceover = (
-        config.get("voiceover")
-        or {}
-    )
-
+    voiceover = config.get("voiceover") or {}
     if not voiceover.get("enabled"):
         return None
-
-    text = str(
-        voiceover.get("script")
-        or ""
-    ).strip()
-
+    text = str(voiceover.get("script") or "").strip()
     if not text:
-        raise RuntimeError(
-            "Naskah voice-over kosong"
+        raise RuntimeError("Naskah voice-over kosong")
+    asset_id = str(voiceover.get("approved_asset_id") or "").strip()
+    fingerprint = str(voiceover.get("approved_fingerprint") or "").strip()
+    if asset_id or fingerprint:
+        if not asset_id or not fingerprint:
+            raise RuntimeError("Approved voice asset tidak lengkap")
+        approved = resolve_approved_voice_asset(
+            asset_id=asset_id,
+            expected_fingerprint=fingerprint,
+            expected_voice_id=str(voiceover.get("voice_id") or ""),
+            expected_text=text,
         )
-
+        destination = temp_dir / "voiceover.mp3"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(approved["audio_path"], destination)
+        return destination
     return generate_elevenlabs_audio(
-        voice_id=str(
-            voiceover.get("voice_id")
-            or ""
-        ),
+        voice_id=str(voiceover.get("voice_id") or ""),
         text=text,
-        destination=(
-            temp_dir / "voiceover.mp3"
-        ),
+        destination=temp_dir / "voiceover.mp3",
     )
-
 
 def media_duration_seconds(
     path: Path,
@@ -3641,64 +9352,35 @@ def atempo_chain(
 def voiceover_filter_chain(
     voiceover_path: Path,
     duration: int,
+    preserve_natural_duration: bool = False,
 ) -> str:
-    fade_start = max(
-        duration - 0.45,
-        0,
-    )
+    actual_duration = media_duration_seconds(voiceover_path)
+    if preserve_natural_duration and actual_duration:
+        fade_start = max(min(float(actual_duration), float(duration)) - 0.35, 0.0)
+    else:
+        fade_start = max(duration - 0.45, 0)
 
     filters = [
-        "aresample=44100",
-        (
-            "aformat=sample_fmts=fltp:"
-            "channel_layouts=stereo"
-        ),
-        "highpass=f=80",
-        "lowpass=f=14500",
-        "loudnorm=I=-15:LRA=9:TP=-1.5",
+        'aresample=44100',
+        'aformat=sample_fmts=fltp:channel_layouts=stereo',
+        'highpass=f=80',
+        'lowpass=f=14500',
+        'loudnorm=I=-15:LRA=9:TP=-1.5',
     ]
-
-    actual_duration = media_duration_seconds(
-        voiceover_path
-    )
-
-    target_duration = max(
-        1.0,
-        duration - 0.75,
-    )
-
-    if (
-        actual_duration
-        and actual_duration > target_duration
-    ):
-        filters.extend(
-            atempo_chain(
-                actual_duration / target_duration
-            )
-        )
-    elif (
-        actual_duration
-        and actual_duration < target_duration * 0.94
-    ):
-        filters.extend(
-            atempo_chain(
-                actual_duration / target_duration
-            )
-        )
+    target_duration = max(1.0, duration - 0.75)
+    if not preserve_natural_duration:
+        if actual_duration and actual_duration > target_duration:
+            filters.extend(atempo_chain(actual_duration / target_duration))
+        elif actual_duration and actual_duration < target_duration * 0.94:
+            filters.extend(atempo_chain(actual_duration / target_duration))
 
     filters.extend([
-        f"apad=pad_dur={duration}",
-        f"atrim=0:{duration}",
-        "afade=t=in:st=0:d=0.12",
-        f"afade=t=out:st={fade_start}:d=0.4",
+        f'apad=pad_dur={duration}',
+        f'atrim=0:{duration}',
+        'afade=t=in:st=0:d=0.12',
+        f'afade=t=out:st={fade_start:.3f}:d=0.35',
     ])
-
-    return (
-        "[1:a]"
-        + ",".join(filters)
-        + "[a]"
-    )
-
+    return '[1:a]' + ','.join(filters) + '[a]'
 
 def render_slideshow_video(
     config: dict[str, Any],
@@ -4982,6 +10664,103 @@ def build_raw_catalog_layout_snapshot(
 
 
 
+
+# B18E_CLOSING_HELPERS_START
+def raw_catalog_closing_duration(
+    duration_seconds: int | float,
+) -> float:
+    duration = max(1.0, float(duration_seconds or 0))
+    if duration >= 20.0:
+        return 5.0
+    return round(min(5.0, max(3.5, duration * 0.22)), 3)
+
+
+def raw_catalog_visual_product_name(value: str) -> str:
+    original = re.sub(r"\s+", " ", str(value or "Produk").strip())
+    if len(original) <= 28:
+        return original
+
+    compact = original
+    for token in ("Articulated", "Fidget", "Keychain", "New"):
+        compact = re.sub(
+            rf"\b{re.escape(token)}\b",
+            "",
+            compact,
+            flags=re.IGNORECASE,
+        )
+
+    compact = re.sub(
+        r"^Sack\s+Of\s+",
+        "",
+        compact,
+        flags=re.IGNORECASE,
+    )
+    compact = re.sub(r"\s+", " ", compact).strip()
+
+    if len(compact) <= 30:
+        return compact
+
+    words = compact.split()
+    clicker_index = next(
+        (
+            index
+            for index, word in enumerate(words)
+            if word.lower() == "clicker"
+        ),
+        None,
+    )
+
+    if clicker_index is not None:
+        candidate = " ".join(words[: min(clicker_index + 1, 5)])
+    else:
+        candidate = " ".join(words[:4])
+
+    return candidate[:34].rstrip()
+
+
+def raw_catalog_promo_visual_lines(
+    promo: dict[str, Any] | None,
+) -> list[str]:
+    source = promo if isinstance(promo, dict) else {}
+    custom = str(source.get("label") or "").strip()
+    custom_title = ""
+
+    if custom:
+        custom_title = re.split(r"[.!?]", custom, maxsplit=1)[0].strip()
+        lowered = custom_title.lower()
+        if (
+            len(custom_title) > 34
+            or (
+                "diskon" in lowered
+                and (
+                    "rp" in lowered
+                    or "belanja" in lowered
+                    or "pembelian" in lowered
+                )
+            )
+        ):
+            custom_title = "PROMO SPESIAL"
+
+    lines = [(custom_title or "PROMO SPESIAL").upper()]
+
+    try:
+        min_amount = int(float(source.get("min_amount") or 0))
+    except (TypeError, ValueError):
+        min_amount = 0
+
+    try:
+        discount = int(round(float(source.get("discount_percent") or 0)))
+    except (TypeError, ValueError):
+        discount = 0
+
+    if min_amount > 0:
+        lines.append("MIN. BELANJA " + format_rupiah(min_amount).upper())
+    if discount > 0:
+        lines.append(f"DISKON {discount}%")
+
+    return lines[:3]
+# B18E_CLOSING_HELPERS_END
+
 def overlay_raw_catalog_video(
     input_path: Path,
     config: dict[str, Any],
@@ -4997,22 +10776,386 @@ def overlay_raw_catalog_video(
         config["duration_seconds"]
     )
 
-    hook_size = 33 if width <= 720 else 44
-    catalog_size = 21 if width <= 720 else 28
-    promo_size = 22 if width <= 720 else 30
-    cta_size = 24 if width <= 720 else 32
+    hook_size = 28 if width <= 720 else 38
+    catalog_size = 18 if width <= 720 else 25
+    promo_size = 21 if width <= 720 else 29
+    cta_size = 23 if width <= 720 else 31
     brand_size = 17 if width <= 720 else 22
-    top_box_x = int(width * 0.045)
-    top_box_y = int(height * safe_area["top"])
-    top_box_w = int(width * 0.91)
-    top_box_h = int(height * 0.175)
-    product_box_x = int(width * 0.055)
-    product_box_y = int(height * safe_area["product_box_y"])
-    product_box_w = int(width * 0.89)
-    product_box_h = int(height * 0.105)
-    catalog_box_x = int(width * 0.055)
-    catalog_box_y = int(height * safe_area["closing_box_y"])
-    catalog_box_w = int(width * 0.89)
+    top_box_x = int(width * 0.060)
+    # Resolve safe-area dari snapshot/config apabila tersedia.
+    # Gunakan fallback aman untuk video vertikal bila data lama
+    # belum memiliki safe_area.
+    _local_values = locals()
+
+    _layout_snapshot = (
+        _local_values.get("layout_snapshot")
+        if isinstance(
+            _local_values.get("layout_snapshot"),
+            dict,
+        )
+        else {}
+    )
+
+    _config = (
+        _local_values.get("config")
+        if isinstance(
+            _local_values.get("config"),
+            dict,
+        )
+        else {}
+    )
+
+    _job_config = (
+        _local_values.get("job_config")
+        if isinstance(
+            _local_values.get("job_config"),
+            dict,
+        )
+        else {}
+    )
+
+    safe_area = (
+        _layout_snapshot.get("safe_area")
+        or _config.get("safe_area")
+        or (
+            _config.get("layout_snapshot", {})
+            if isinstance(
+                _config.get("layout_snapshot"),
+                dict,
+            )
+            else {}
+        ).get("safe_area")
+        or _job_config.get("safe_area")
+        or (
+            _job_config.get("layout_snapshot", {})
+            if isinstance(
+                _job_config.get("layout_snapshot"),
+                dict,
+            )
+            else {}
+        ).get("safe_area")
+        or {
+            "top": 0.08,
+            "bottom": 0.14,
+            "left": 0.06,
+            "right": 0.06,
+        }
+    )
+
+    safe_area = {
+        "top": max(
+            0.0,
+            min(
+                0.40,
+                float(
+                    safe_area.get("top", 0.08)
+                ),
+            ),
+        ),
+        "bottom": max(
+            0.0,
+            min(
+                0.40,
+                float(
+                    safe_area.get("bottom", 0.14)
+                ),
+            ),
+        ),
+        "left": max(
+            0.0,
+            min(
+                0.30,
+                float(
+                    safe_area.get("left", 0.06)
+                ),
+            ),
+        ),
+        "right": max(
+            0.0,
+            min(
+                0.30,
+                float(
+                    safe_area.get("right", 0.06)
+                ),
+            ),
+        ),
+    }
+
+    # SAFE_AREA_DEFAULTS_V3_START
+    # Normalize old and new layout snapshots before
+    # any overlay coordinate is read.
+    _safe_area_source_v3 = locals().get(
+        "safe_area"
+    )
+
+    if not isinstance(
+        _safe_area_source_v3,
+        dict,
+    ):
+        _safe_area_source_v3 = {}
+
+        for _safe_container_name_v3 in (
+            "layout_snapshot",
+            "config",
+            "job_config",
+        ):
+            _safe_container_v3 = locals().get(
+                _safe_container_name_v3
+            )
+
+            if not isinstance(
+                _safe_container_v3,
+                dict,
+            ):
+                continue
+
+            _safe_candidate_v3 = (
+                _safe_container_v3.get(
+                    "safe_area"
+                )
+            )
+
+            if not isinstance(
+                _safe_candidate_v3,
+                dict,
+            ):
+                _safe_layout_v3 = (
+                    _safe_container_v3.get(
+                        "layout_snapshot"
+                    )
+                )
+
+                if isinstance(
+                    _safe_layout_v3,
+                    dict,
+                ):
+                    _safe_candidate_v3 = (
+                        _safe_layout_v3.get(
+                            "safe_area"
+                        )
+                    )
+
+            if isinstance(
+                _safe_candidate_v3,
+                dict,
+            ):
+                _safe_area_source_v3 = (
+                    _safe_candidate_v3
+                )
+                break
+
+    safe_area = dict(
+        _safe_area_source_v3
+    )
+
+    _safe_area_defaults_v3 = {
+        "top": 0.08,
+        "bottom": 0.14,
+        "left": 0.06,
+        "right": 0.06,
+
+        "hook_y": 0.08,
+        "hook_box_y": 0.08,
+        "hook_box_height": 0.11,
+        "hook_text_y": 0.105,
+
+        "product_y": 0.19,
+        "product_box_y": 0.19,
+        "product_box_height": 0.12,
+        "product_text_y": 0.22,
+
+        "promo_y": 0.68,
+        "promo_box_y": 0.68,
+        "promo_box_height": 0.10,
+        "promo_text_y": 0.705,
+
+        "cta_y": 0.76,
+        "cta_box_y": 0.76,
+        "cta_box_height": 0.10,
+        "cta_text_y": 0.785,
+
+        "closing_y": 0.74,
+        "closing_box_y": 0.74,
+        "closing_box_height": 0.12,
+        "closing_text_y": 0.775,
+
+        "safe_width": 0.88,
+        "content_width": 0.88,
+    }
+
+    for (
+        _safe_key_v3,
+        _safe_default_v3,
+    ) in _safe_area_defaults_v3.items():
+        try:
+            safe_area[_safe_key_v3] = float(
+                safe_area.get(
+                    _safe_key_v3,
+                    _safe_default_v3,
+                )
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            safe_area[_safe_key_v3] = (
+                _safe_default_v3
+            )
+
+    # SAFE_AREA_DEFAULTS_V3_END
+
+    # SAFE_AREA_CANONICAL_V4B_START
+    # Gabungkan canonical layout, snapshot campaign,
+    # dan config job tanpa mengubah ekspresi f-string.
+    _safe_config_v4b = locals().get(
+        "config"
+    )
+
+    if not isinstance(
+        _safe_config_v4b,
+        dict,
+    ):
+        _safe_config_v4b = {}
+
+    _aspect_ratio_v4b = (
+        _safe_config_v4b.get(
+            "aspect_ratio",
+            "9:16",
+        )
+    )
+
+    _current_safe_area_v4b = (
+        locals().get("safe_area")
+    )
+
+    safe_area = (
+        dict(_current_safe_area_v4b)
+        if isinstance(
+            _current_safe_area_v4b,
+            dict,
+        )
+        else {}
+    )
+
+    _canonical_function_v4b = (
+        globals().get(
+            "raw_catalog_safe_area"
+        )
+    )
+
+    _canonical_area_v4b = {}
+
+    if callable(
+        _canonical_function_v4b
+    ):
+        try:
+            _canonical_area_v4b = (
+                _canonical_function_v4b(
+                    _aspect_ratio_v4b
+                )
+            )
+        except TypeError:
+            try:
+                _canonical_area_v4b = (
+                    _canonical_function_v4b()
+                )
+            except Exception:
+                _canonical_area_v4b = {}
+        except Exception:
+            _canonical_area_v4b = {}
+
+    if isinstance(
+        _canonical_area_v4b,
+        dict,
+    ):
+        _merged_safe_area_v4b = dict(
+            _canonical_area_v4b
+        )
+
+        _merged_safe_area_v4b.update(
+            safe_area
+        )
+
+        safe_area = (
+            _merged_safe_area_v4b
+        )
+
+    _layout_snapshot_v4b = (
+        _safe_config_v4b.get(
+            "layout_snapshot"
+        )
+    )
+
+    if isinstance(
+        _layout_snapshot_v4b,
+        dict,
+    ):
+        _snapshot_area_v4b = (
+            _layout_snapshot_v4b.get(
+                "safe_area"
+            )
+        )
+
+        if isinstance(
+            _snapshot_area_v4b,
+            dict,
+        ):
+            safe_area.update(
+                _snapshot_area_v4b
+            )
+
+    _config_area_v4b = (
+        _safe_config_v4b.get(
+            "safe_area"
+        )
+    )
+
+    if isinstance(
+        _config_area_v4b,
+        dict,
+    ):
+        safe_area.update(
+            _config_area_v4b
+        )
+
+    _required_safe_area_v4b = {
+        "brand_y": 0.855,
+        "cta_y": 0.815,
+        "hook_y": 0.085,
+        "product_text_y": 0.705,
+    }
+
+    for (
+        _safe_key_v4b,
+        _safe_default_v4b,
+    ) in _required_safe_area_v4b.items():
+        try:
+            safe_area[_safe_key_v4b] = float(
+                safe_area.get(
+                    _safe_key_v4b,
+                    _safe_default_v4b,
+                )
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            safe_area[_safe_key_v4b] = (
+                _safe_default_v4b
+            )
+
+    # SAFE_AREA_CANONICAL_V4B_END
+
+    top_box_y = int(height * safe_area.get("top", 0.08))
+    top_box_w = int(width * 0.880)
+    top_box_h = int(height * 0.132)
+    product_box_x = int(width * 0.065)
+    product_box_y = int(height * safe_area.get("product_box_y", 0.19))
+    product_box_w = int(width * 0.870)
+    product_box_h = int(height * 0.086)
+    catalog_box_x = int(width * 0.060)
+    catalog_box_y = int(height * safe_area.get("closing_box_y", 0.74))
+    catalog_box_w = int(width * 0.880)
     catalog_box_h = int(height * 0.245)
     hook_end = min(
         float(duration),
@@ -5063,9 +11206,8 @@ def overlay_raw_catalog_video(
             for name in product_names
         ]
 
-    closing_duration = min(
-        4.0,
-        max(3.0, duration * 0.16),
+    closing_duration = raw_catalog_closing_duration(
+        duration
     )
 
     final_start = max(
@@ -5086,7 +11228,7 @@ def overlay_raw_catalog_video(
     }
 
     files["hook"].write_text(
-        wrap(config["hook"], 25),
+        wrap(config["hook"], 23),
         encoding="utf-8",
     )
 
@@ -5098,7 +11240,7 @@ def overlay_raw_catalog_video(
             / f"catalog-product-{index + 1:02d}.txt"
         )
         product_file.write_text(
-            wrap(f"{index + 1}. {name}", 28),
+            wrap(f"{index + 1}. {name}", 24),
             encoding="utf-8",
         )
         product_files.append(product_file)
@@ -5138,84 +11280,85 @@ def overlay_raw_catalog_video(
         encoding="utf-8",
     )
 
-    closing_lines: list[dict[str, Any]] = []
-    closing_y = safe_area["closing_start_y"]
-
-    def add_closing_line(
-        text: str,
-        color: str,
-        size: int,
-        width_chars: int = 30,
-    ) -> None:
-        nonlocal closing_y
-
-        line_path = (
-            temp_dir
-            / f"closing-line-{len(closing_lines) + 1:02d}.txt"
+    # B18E_CLOSING_SETUP_START
+    display_product_names = [
+        raw_catalog_visual_product_name(
+            item.get("name") or item.get("label") or "Produk"
         )
-        wrapped = wrap(
-            text,
-            width_chars,
-        )
-        line_path.write_text(
-            wrapped,
+        for item in product_items
+    ]
+
+    closing_product_files: list[dict[str, Any]] = []
+
+    for index, display_name in enumerate(display_product_names[:6]):
+        product_path = temp_dir / f"closing-product-{index + 1:02d}.txt"
+        product_path.write_text(
+            wrap(f"{index + 1}. {display_name}", 20),
             encoding="utf-8",
         )
-        lines = max(
-            1,
-            wrapped.count("\n") + 1,
-        )
-        closing_lines.append({
-            "path": line_path,
-            "color": color,
-            "size": size,
-            "y": closing_y,
+        closing_product_files.append({
+            "path": product_path,
+            "column": index % 2,
+            "row": index // 2,
         })
-        closing_y += (
-            0.033 * lines
-            + 0.014
-        )
 
-    add_closing_line(
-        "Pilih produk favoritmu:",
-        "0x9EF0BD",
-        catalog_size + 2,
-        30,
-    )
-
-    if promo_enabled and promo_label:
-        add_closing_line(
-            promo_label.upper(),
-            "0xFFD36A",
-            promo_size,
-            30,
-        )
-
-    add_closing_line(
-        (
-            f"{len(product_names)} pilihan produk "
-            "tersedia"
-        ),
-        "white",
-        max(18, catalog_size),
-        30,
-    )
-
-    if promo_enabled and promo_label:
-        files["promo"].write_text(
-            wrap(promo_label, 34),
-            encoding="utf-8",
-        )
-
-    files["cta"].write_text(
-        wrap(config["cta"], 34),
+    files["closing_title"] = temp_dir / "closing-products-title.txt"
+    files["closing_title"].write_text(
+        "PILIH FAVORITMU ATAU KOMBINASIKAN",
         encoding="utf-8",
     )
 
-    files["brand"].write_text(
-        "spacecraft.id",
-        encoding="utf-8",
+    promo_visual_lines = (
+        raw_catalog_promo_visual_lines(promo)
+        if promo_enabled
+        else [
+            "PILIH PRODUK FAVORITMU",
+            f"{len(product_names)} PRODUK TERSEDIA",
+        ]
     )
+
+    promo_visual_files: list[Path] = []
+    for index, line in enumerate(promo_visual_lines):
+        promo_path = temp_dir / f"closing-promo-{index + 1:02d}.txt"
+        promo_path.write_text(wrap(line, 30), encoding="utf-8")
+        promo_visual_files.append(promo_path)
+
+    files["cta"].write_text(wrap(config["cta"], 34), encoding="utf-8")
+    files["brand"].write_text("spacecraft.id", encoding="utf-8")
+
+    closing_scene_product_end = min(
+        float(duration),
+        final_start + closing_duration * 0.54,
+    )
+    closing_scene_promo_start = closing_scene_product_end
+
+    if config.get("aspect_ratio") == "9:16":
+        closing_product_panel_y = 0.500
+        closing_product_panel_h = 0.360
+        closing_product_title_y = 0.528
+        closing_product_rows = [0.592, 0.685, 0.778]
+        closing_product_columns = [0.090, 0.535]
+        closing_product_font = 18 if width <= 720 else 24
+        closing_promo_panel_y = 0.560
+        closing_promo_panel_h = 0.295
+        closing_promo_start_y = 0.590
+        closing_promo_step_y = 0.060
+        closing_cta_y = 0.792
+        closing_brand_y = 0.838
+    else:
+        closing_product_panel_y = 0.465
+        closing_product_panel_h = 0.425
+        closing_product_title_y = 0.492
+        closing_product_rows = [0.555, 0.675, 0.795]
+        closing_product_columns = [0.065, 0.515]
+        closing_product_font = 18 if width <= 720 else 24
+        closing_promo_panel_y = 0.520
+        closing_promo_panel_h = 0.360
+        closing_promo_start_y = 0.555
+        closing_promo_step_y = 0.075
+        closing_cta_y = 0.790
+        closing_brand_y = 0.865
+    # B18E_CLOSING_SETUP_END
 
     filter_parts = [
         (
@@ -5228,20 +11371,19 @@ def overlay_raw_catalog_video(
             f"crop={width}:{height},"
             "setsar=1,fps=30,format=yuv420p"
         ),
-        f"drawbox=x={top_box_x}:y={top_box_y}:"
-        f"w={top_box_w}:h={top_box_h}:"
-        "color=black@0.45:t=fill:"
-        f"enable='between(t\\,0\\,{hook_end:.3f})'",
         f"drawtext=fontfile='{FONT_FILE}':"
         f"textfile='{files['hook']}':"
         "fontcolor=white:"
-        "bordercolor=black@0.72:"
-        "borderw=3:"
+        "bordercolor=black@0.64:"
+        "borderw=2:"
+        "box=1:"
+        "boxcolor=black@0.34:"
+        "boxborderw=18:"
         f"fontsize={hook_size}:"
-        "line_spacing=8:"
-        "x=w*0.070:"
-        f"y=h*{safe_area['hook_y']:.3f}:"
-        "shadowcolor=black@0.72:"
+        "line_spacing=7:"
+        "x=w*0.090:"
+        f"y=h*{safe_area['hook_y'] + 0.018:.3f}:"
+        "shadowcolor=black@0.64:"
         "shadowx=2:"
         "shadowy=3:"
         f"enable='between(t\\,0\\,{hook_end:.3f})'",
@@ -5259,79 +11401,141 @@ def overlay_raw_catalog_video(
 
         enabled = f"between(t\\,{start:.3f}\\,{end:.3f})"
         filter_parts.extend([
-            f"drawbox=x={product_box_x}:y={product_box_y}:"
-            f"w={product_box_w}:h={product_box_h}:"
-            "color=black@0.52:t=fill:"
-            f"enable='{enabled}'",
             f"drawtext=fontfile='{FONT_FILE}':"
             f"textfile='{product_file}':"
             "fontcolor=white:"
-            "bordercolor=black@0.72:"
-            "borderw=3:"
-            f"fontsize={catalog_size + 2}:"
-            "line_spacing=6:"
-            "x=w*0.085:"
-            f"y=h*{safe_area['product_text_y']:.3f}:"
-            "shadowcolor=black@0.70:"
+            "bordercolor=black@0.66:"
+            "borderw=2:"
+            "box=1:"
+            "boxcolor=black@0.38:"
+            "boxborderw=14:"
+            f"fontsize={catalog_size + 1}:"
+            "line_spacing=5:"
+            "x=w*0.090:"
+            f"y=h*{safe_area['product_text_y'] + 0.014:.3f}:"
+            "shadowcolor=black@0.62:"
             "shadowx=2:"
             "shadowy=2:"
             f"enable='{enabled}'",
         ])
 
-    final_enabled = f"gte(t\\,{final_start:.3f})"
+    # B18E_CLOSING_FILTER_START
+    product_closing_enabled = (
+        f"between(t\\,{final_start:.3f}\\,{closing_scene_product_end:.3f})"
+    )
+    promo_closing_enabled = (
+        f"between(t\\,{closing_scene_promo_start:.3f}\\,{float(duration):.3f})"
+    )
+
     filter_parts.extend([
-        f"drawbox=x={catalog_box_x}:y={catalog_box_y}:"
-        f"w={catalog_box_w}:h={catalog_box_h}:"
-        "color=black@0.58:t=fill:"
-        f"enable='{final_enabled}'",
+        "drawbox=x=iw*0.060:"
+        f"y=ih*{closing_product_panel_y:.3f}:"
+        "w=iw*0.880:"
+        f"h=ih*{closing_product_panel_h:.3f}:"
+        "color=black@0.52:t=fill:"
+        f"enable='{product_closing_enabled}'",
+        "drawbox=x=iw*0.060:"
+        f"y=ih*{closing_product_panel_y:.3f}:"
+        "w=iw*0.880:h=5:"
+        "color=0x9EF0BD@0.95:t=fill:"
+        f"enable='{product_closing_enabled}'",
+        "drawbox=x=iw*0.060:"
+        f"y=ih*{closing_product_panel_y + closing_product_panel_h:.3f}:"
+        "w=iw*0.250:h=4:"
+        "color=0xFFD36A@0.92:t=fill:"
+        f"enable='{product_closing_enabled}'",
+        f"drawtext=fontfile='{FONT_FILE}':"
+        f"textfile='{files['closing_title']}':"
+        "expansion=none:fontcolor=0x9EF0BD:"
+        "bordercolor=black@0.72:borderw=2:"
+        f"fontsize={catalog_size + 3}:"
+        "x=(w-text_w)/2:"
+        f"y=h*{closing_product_title_y:.3f}:"
+        "shadowcolor=black@0.75:shadowx=2:shadowy=2:"
+        f"enable='{product_closing_enabled}'",
     ])
 
-    for line in closing_lines:
+    for product_item in closing_product_files:
+        column = int(product_item["column"])
+        row = int(product_item["row"])
         filter_parts.append(
             f"drawtext=fontfile='{FONT_FILE}':"
-            f"textfile='{line['path']}':"
-            "expansion=none:"
-            f"fontcolor={line['color']}:"
-            "bordercolor=black@0.78:"
-            "borderw=2:"
-            f"fontsize={line['size']}:"
-            "line_spacing=6:"
-            "x=w*0.085:"
-            f"y=h*{line['y']:.3f}:"
-            "shadowcolor=black@0.72:"
-            "shadowx=2:"
-            "shadowy=2:"
-            f"enable='{final_enabled}'"
+            f"textfile='{product_item['path']}':"
+            "expansion=none:fontcolor=white:"
+            "bordercolor=black@0.66:borderw=2:"
+            f"fontsize={closing_product_font}:line_spacing=4:"
+            f"x=w*{closing_product_columns[column]:.3f}:"
+            f"y=h*{closing_product_rows[row]:.3f}:"
+            "shadowcolor=black@0.72:shadowx=2:shadowy=2:"
+            f"enable='{product_closing_enabled}'"
         )
 
-    if closing_y < safe_area["cta_y"] - 0.025:
+    filter_parts.append(
+        "drawbox=x=iw*0.070:"
+        f"y=ih*{closing_promo_panel_y:.3f}:"
+        "w=iw*0.860:"
+        f"h=ih*{closing_promo_panel_h:.3f}:"
+        "color=black@0.54:t=fill:"
+        f"enable='{promo_closing_enabled}'"
+    )
+
+    filter_parts.append(
+        "drawbox=x=iw*0.070:"
+        f"y=ih*{closing_promo_panel_y:.3f}:"
+        "w=iw*0.860:h=5:"
+        "color=0xFFD36A@0.95:t=fill:"
+        f"enable='{promo_closing_enabled}'"
+    )
+
+    filter_parts.append(
+        "drawbox=x=iw*0.070:"
+        f"y=ih*{closing_promo_panel_y + closing_promo_panel_h:.3f}:"
+        "w=iw*0.220:h=4:"
+        "color=0x9EF0BD@0.90:t=fill:"
+        f"enable='{promo_closing_enabled}'"
+    )
+
+    for index, promo_file in enumerate(promo_visual_files):
+        promo_color = (
+            "0xFFD36A"
+            if index == 0 or "DISKON" in promo_visual_lines[index]
+            else "white"
+        )
+        promo_font = promo_size + 3 if index == 0 else promo_size
+        promo_y = closing_promo_start_y + closing_promo_step_y * index
         filter_parts.append(
             f"drawtext=fontfile='{FONT_FILE}':"
-            f"textfile='{files['cta']}':"
+            f"textfile='{promo_file}':"
             "expansion=none:"
-            "fontcolor=0x9EF0BD:"
-            "bordercolor=black@0.82:"
-            "borderw=3:"
-            f"fontsize={cta_size}:"
-            "line_spacing=6:"
+            f"fontcolor={promo_color}:"
+            "bordercolor=black@0.70:borderw=2:"
+            f"fontsize={promo_font}:line_spacing=5:"
             "x=(w-text_w)/2:"
-            f"y=h*{safe_area['cta_y']:.3f}:"
-            "shadowcolor=black@0.72:"
-            "shadowx=2:"
-            "shadowy=2:"
-            f"enable='{final_enabled}'"
+            f"y=h*{promo_y:.3f}:"
+            "shadowcolor=black@0.75:shadowx=2:shadowy=2:"
+            f"enable='{promo_closing_enabled}'"
         )
 
     filter_parts.extend([
         f"drawtext=fontfile='{FONT_FILE}':"
+        f"textfile='{files['cta']}':"
+        "expansion=none:fontcolor=0x9EF0BD:"
+        "bordercolor=black@0.72:borderw=2:"
+        f"fontsize={cta_size}:line_spacing=6:"
+        "x=(w-text_w)/2:"
+        f"y=h*{closing_cta_y:.3f}:"
+        "shadowcolor=black@0.75:shadowx=2:shadowy=2:"
+        f"enable='{promo_closing_enabled}'",
+        f"drawtext=fontfile='{FONT_FILE}':"
         f"textfile='{files['brand']}':"
-        "fontcolor=white@0.74:"
-        "bordercolor=black@0.60:"
-        "borderw=2:"
+        "expansion=none:fontcolor=white@0.80:"
+        "bordercolor=black@0.55:borderw=1:"
         f"fontsize={brand_size}:"
         "x=(w-text_w)/2:"
-        f"y=h*{safe_area['brand_y']:.3f}",
+        f"y=h*{closing_brand_y:.3f}:"
+        f"enable='{promo_closing_enabled}'",
     ])
+    # B18E_CLOSING_FILTER_END
 
     video_filter = ",".join(filter_parts)
 
@@ -5425,6 +11629,7 @@ def overlay_raw_catalog_video(
         voice_chain = voiceover_filter_chain(
             voiceover_path,
             duration,
+            preserve_natural_duration=True,
         ).replace(
             "[a]",
             "[vo_base]",
@@ -5504,6 +11709,7 @@ def overlay_raw_catalog_video(
             + voiceover_filter_chain(
                 voiceover_path,
                 duration,
+                preserve_natural_duration=True,
             )
         )
 
@@ -5661,9 +11867,8 @@ def render_raw_catalog_video(
         config["duration_seconds"]
     )
 
-    closing_duration = min(
-        4.0,
-        max(3.0, duration * 0.16),
+    closing_duration = raw_catalog_closing_duration(
+        duration
     )
 
     product_duration = max(
@@ -5758,6 +11963,278 @@ def render_raw_catalog_video(
     )
 
     overlay_raw_catalog_video(
+        input_path=base_video,
+        config=config,
+        output_path=output_path,
+        temp_dir=temp_dir,
+        voiceover_path=voiceover_path,
+    )
+
+
+def overlay_single_product_video(
+    input_path: Path,
+    config: dict[str, Any],
+    output_path: Path,
+    temp_dir: Path,
+    voiceover_path: Path | None = None,
+) -> None:
+    width, height = dimensions(
+        config.get("aspect_ratio", "9:16")
+    )
+
+    duration = int(
+        config.get("duration_seconds", 20)
+    )
+
+    hook = (
+        str(config.get("hook") or "").strip()
+        or f"Kenalan sama {config.get('product_name') or 'produk ini'}"
+    )
+    product_name = str(
+        config.get("product_name") or "Produk SpaceCraft"
+    ).strip()
+    price_label = str(
+        config.get("price_label") or "Cek harga"
+    ).strip()
+    cta = (
+        str(config.get("cta") or "").strip()
+        or "Chat sekarang, pilih varian favoritmu"
+    )
+
+    files = {
+        "hook": temp_dir / "single-hook.txt",
+        "name": temp_dir / "single-name.txt",
+        "price": temp_dir / "single-price.txt",
+        "cta": temp_dir / "single-cta.txt",
+        "badge": temp_dir / "single-badge.txt",
+        "brand": temp_dir / "single-brand.txt",
+    }
+
+    files["hook"].write_text(wrap(hook, 24), encoding="utf-8")
+    files["name"].write_text(wrap(product_name, 24), encoding="utf-8")
+    files["price"].write_text(price_label, encoding="utf-8")
+    files["cta"].write_text(wrap(cta, 30), encoding="utf-8")
+    files["badge"].write_text("SINGLE PRODUCT ADS", encoding="utf-8")
+    files["brand"].write_text("spacecraft.id", encoding="utf-8")
+
+    hook_size = 31 if width <= 720 else 42
+    name_size = 25 if width <= 720 else 34
+    price_size = 32 if width <= 720 else 44
+    cta_size = 24 if width <= 720 else 32
+    badge_size = 14 if width <= 720 else 18
+    brand_size = 15 if width <= 720 else 20
+
+    final_start = max(
+        0.0,
+        float(duration) - 5.5,
+    )
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    video_filter = ",".join([
+        f"scale={width}:{height}:force_original_aspect_ratio=increase",
+        f"crop={width}:{height}",
+        "setsar=1",
+        "fps=30",
+        "format=yuv420p",
+        "drawbox=x=iw*0.060:y=ih*0.075:w=iw*0.880:h=ih*0.185:color=black@0.36:t=fill:enable='between(t\\,0\\,5.8)'",
+        "drawbox=x=iw*0.060:y=ih*0.075:w=iw*0.880:h=5:color=0x9EF0BD@0.95:t=fill:enable='between(t\\,0\\,5.8)'",
+        "drawbox=x=iw*0.082:y=ih*0.098:w=iw*0.280:h=ih*0.034:color=0xFFD36A@0.95:t=fill:enable='between(t\\,0\\,5.8)'",
+        f"drawtext=fontfile='{FONT_FILE}':textfile='{files['badge']}':expansion=none:fontcolor=black:fontsize={badge_size}:x=w*0.105:y=h*0.104:enable='between(t\\,0\\,5.8)'",
+        f"drawtext=fontfile='{FONT_FILE}':textfile='{files['hook']}':expansion=none:fontcolor=white:bordercolor=black@0.68:borderw=2:fontsize={hook_size}:line_spacing=8:x=w*0.090:y=h*0.148:shadowcolor=black@0.70:shadowx=2:shadowy=2:enable='between(t\\,0\\,5.8)'",
+        f"drawbox=x=iw*0.070:y=ih*0.650:w=iw*0.860:h=ih*0.195:color=black@0.46:t=fill:enable='between(t\\,3.0\\,{duration:.3f})'",
+        f"drawbox=x=iw*0.070:y=ih*0.650:w=6:h=ih*0.195:color=0x9EF0BD@0.94:t=fill:enable='between(t\\,3.0\\,{duration:.3f})'",
+        f"drawtext=fontfile='{FONT_FILE}':textfile='{files['name']}':expansion=none:fontcolor=white:bordercolor=black@0.65:borderw=2:fontsize={name_size}:line_spacing=7:x=w*0.105:y=h*0.675:shadowcolor=black@0.70:shadowx=2:shadowy=2:enable='between(t\\,3.0\\,{duration:.3f})'",
+        f"drawtext=fontfile='{FONT_FILE}':textfile='{files['price']}':expansion=none:fontcolor=0xFFD36A:bordercolor=black@0.70:borderw=2:fontsize={price_size}:x=w*0.105:y=h*0.765:shadowcolor=black@0.74:shadowx=2:shadowy=2:enable='between(t\\,3.0\\,{duration:.3f})'",
+        f"drawbox=x=iw*0.060:y=ih*0.505:w=iw*0.880:h=ih*0.280:color=black@0.50:t=fill:enable='between(t\\,{final_start:.3f}\\,{duration:.3f})'",
+        f"drawbox=x=iw*0.060:y=ih*0.505:w=iw*0.880:h=5:color=0xFFD36A@0.95:t=fill:enable='between(t\\,{final_start:.3f}\\,{duration:.3f})'",
+        f"drawtext=fontfile='{FONT_FILE}':textfile='{files['cta']}':expansion=none:fontcolor=0x9EF0BD:bordercolor=black@0.70:borderw=2:fontsize={cta_size}:line_spacing=8:x=(w-text_w)/2:y=h*0.585:shadowcolor=black@0.72:shadowx=2:shadowy=2:enable='between(t\\,{final_start:.3f}\\,{duration:.3f})'",
+        f"drawtext=fontfile='{FONT_FILE}':textfile='{files['brand']}':expansion=none:fontcolor=white@0.82:bordercolor=black@0.55:borderw=1:fontsize={brand_size}:x=(w-text_w)/2:y=h*0.725:enable='between(t\\,{final_start:.3f}\\,{duration:.3f})'",
+    ])
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(input_path),
+    ]
+
+    if voiceover_path:
+        filter_complex = (
+            f"[0:v]{video_filter}[v];"
+            + voiceover_filter_chain(
+                voiceover_path,
+                duration,
+                preserve_natural_duration=True,
+            )
+        )
+        command.extend([
+            "-i",
+            str(voiceover_path),
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[v]",
+            "-map",
+            "[a]",
+        ])
+    else:
+        command.extend([
+            "-vf",
+            video_filter,
+            "-an",
+        ])
+
+    command.extend([
+        "-t",
+        str(duration),
+        "-r",
+        "30",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "21",
+        "-pix_fmt",
+        "yuv420p",
+    ])
+
+    if voiceover_path:
+        command.extend([
+            "-c:a",
+            "aac",
+            "-b:a",
+            "160k",
+            "-shortest",
+        ])
+
+    command.extend([
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ])
+
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=1200,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            "Overlay single product gagal: "
+            + result.stderr[-3000:]
+        )
+
+    if (
+        not output_path.is_file()
+        or output_path.stat().st_size < 10_000
+    ):
+        raise RuntimeError(
+            "Output single product video tidak valid"
+        )
+
+
+def render_single_product_video(
+    config: dict[str, Any],
+    output_path: Path,
+    temp_dir: Path,
+    voiceover_path: Path | None = None,
+) -> None:
+    raw_clip = config.get("raw_clip") or {}
+    archive = str(raw_clip.get("archive") or "").strip()
+
+    if not archive:
+        raise RuntimeError(
+            "Raw video single product belum dipilih"
+        )
+
+    raw_path = STORAGE_ROOT / archive
+
+    try:
+        raw_path.resolve().relative_to(
+            STORAGE_ROOT.resolve()
+        )
+    except ValueError:
+        raise RuntimeError(
+            "Raw video berada di luar storage"
+        )
+
+    if (
+        not raw_path.is_file()
+        or raw_path.stat().st_size < 10_000
+    ):
+        raise RuntimeError(
+            "Raw video tidak ditemukan: " + archive
+        )
+
+    image_items = [
+        item
+        for item in (config.get("image_sources") or [])
+        if isinstance(item, dict)
+    ][:4]
+
+    duration = int(
+        config.get("duration_seconds", 20)
+    )
+
+    segment_count = max(
+        1,
+        1 + len(image_items),
+    )
+    segment_duration = max(
+        2.5,
+        float(duration) / segment_count,
+    )
+
+    segments: list[Path] = []
+
+    raw_segment = temp_dir / "single-product-001-raw.mp4"
+    render_raw_catalog_segment(
+        input_path=raw_path,
+        output_path=raw_segment,
+        aspect_ratio=config.get("aspect_ratio", "9:16"),
+        duration=segment_duration,
+        trim_start=float(raw_clip.get("trim_start") or 0.0),
+        trim_end=(
+            float(raw_clip["trim_end"])
+            if raw_clip.get("trim_end") is not None
+            else None
+        ),
+        fit_mode=str(raw_clip.get("fit_mode") or "cover"),
+    )
+    segments.append(raw_segment)
+
+    for index, source in enumerate(image_items, start=2):
+        image_segment = (
+            temp_dir
+            / f"single-product-{index:03d}-image.mp4"
+        )
+        render_photo_segment(
+            source=source,
+            output_path=image_segment,
+            temp_dir=temp_dir,
+            aspect_ratio=config.get("aspect_ratio", "9:16"),
+            duration=segment_duration,
+            motion="slow_zoom",
+            fit_mode="cover",
+        )
+        segments.append(image_segment)
+
+    base_video = temp_dir / "single-product-base.mp4"
+    crossfade_video_segments(
+        segments=segments,
+        output_path=base_video,
+        segment_duration=segment_duration,
+        transition_duration=0.26,
+    )
+
+    overlay_single_product_video(
         input_path=base_video,
         config=config,
         output_path=output_path,
@@ -5937,6 +12414,20 @@ def crossfade_video_segments(
         ),
     )
 
+    def run_command(
+        command: list[str],
+        timeout: int = 1200,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+    # --------------------------------------------------------
+    # Percobaan utama: xfade dengan CFR dan timebase eksplisit
+    # --------------------------------------------------------
     command = [
         "ffmpeg",
         "-y",
@@ -5953,9 +12444,11 @@ def crossfade_video_segments(
     for index in range(len(segments)):
         filter_parts.append(
             f"[{index}:v]"
-            "settb=AVTB,"
-            "setpts=PTS-STARTPTS,"
-            "format=yuv420p"
+            "fps=30,"
+            "settb=expr=1/30,"
+            "setpts=N,"
+            "format=yuv420p,"
+            "setsar=1"
             f"[v{index}]"
         )
 
@@ -5989,6 +12482,8 @@ def crossfade_video_segments(
         "-map",
         current_label,
         "-an",
+        "-vsync",
+        "cfr",
         "-r",
         "30",
         "-c:v",
@@ -6004,16 +12499,98 @@ def crossfade_video_segments(
         str(output_path),
     ])
 
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        timeout=1200,
+    result = run_command(command)
+
+    if (
+        result.returncode == 0
+        and output_path.is_file()
+        and output_path.stat().st_size >= 10_000
+    ):
+        return
+
+    xfade_error = result.stderr[-5000:]
+
+    # Bersihkan output kosong dari percobaan xfade.
+    try:
+        output_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+    # --------------------------------------------------------
+    # Fallback aman: concat CFR tanpa transisi.
+    #
+    # Ini sengaja digunakan agar render tetap selesai jika
+    # build FFmpeg tidak kompatibel dengan filter xfade.
+    # --------------------------------------------------------
+    concat_command = [
+        "ffmpeg",
+        "-y",
+    ]
+
+    for segment in segments:
+        concat_command.extend([
+            "-i",
+            str(segment),
+        ])
+
+    concat_filters: list[str] = []
+
+    for index in range(len(segments)):
+        concat_filters.append(
+            f"[{index}:v]"
+            "fps=30,"
+            "settb=expr=1/30,"
+            "setpts=N,"
+            "format=yuv420p,"
+            "setsar=1"
+            f"[c{index}]"
+        )
+
+    concat_inputs = "".join(
+        f"[c{index}]"
+        for index in range(len(segments))
     )
 
-    if result.returncode != 0:
+    concat_filters.append(
+        f"{concat_inputs}"
+        f"concat=n={len(segments)}:"
+        "v=1:a=0"
+        "[concatout]"
+    )
+
+    concat_command.extend([
+        "-filter_complex",
+        ";".join(concat_filters),
+        "-map",
+        "[concatout]",
+        "-an",
+        "-vsync",
+        "cfr",
+        "-r",
+        "30",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "22",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ])
+
+    concat_result = run_command(
+        concat_command
+    )
+
+    if concat_result.returncode != 0:
         raise RuntimeError(
-            result.stderr[-4000:]
+            "Xfade gagal:\n"
+            f"{xfade_error}\n\n"
+            "Concat fallback juga gagal:\n"
+            f"{concat_result.stderr[-5000:]}"
         )
 
     if (
@@ -6021,7 +12598,10 @@ def crossfade_video_segments(
         or output_path.stat().st_size < 10_000
     ):
         raise RuntimeError(
-            "Output crossfade raw catalog tidak valid"
+            "Output concat fallback tidak valid.\n"
+            f"Xfade error:\n{xfade_error}\n\n"
+            f"Concat error:\n"
+            f"{concat_result.stderr[-3000:]}"
         )
 
 
@@ -6296,6 +12876,15 @@ def render_video(
 
     if config.get("render_mode") == "raw_catalog":
         render_raw_catalog_video(
+            config,
+            output_path,
+            temp_dir,
+            voiceover_path,
+        )
+        return
+
+    if config.get("render_mode") == "single_product":
+        render_single_product_video(
             config,
             output_path,
             temp_dir,
@@ -6772,6 +13361,31 @@ def render_job(
             temp_dir,
         )
 
+        # B18D_RENDER_DURATION_GUARD
+        if voiceover_path is not None and str(job.config.get('render_mode') or '') == 'raw_catalog':
+            actual_voice_seconds = media_duration_seconds(voiceover_path)
+            max_voice_seconds = voiceover_max_seconds(int(job.config.get('duration_seconds') or 25))
+            if actual_voice_seconds is None:
+                raise RuntimeError('Durasi voice-over tidak dapat dibaca')
+            preflight = {
+                'actual_duration_seconds': round(float(actual_voice_seconds), 3),
+                'max_voiceover_seconds': max_voice_seconds,
+                'closing_reserved_seconds': B18D_CLOSING_RESERVED_SECONDS,
+                'fits_timeline': bool(actual_voice_seconds <= max_voice_seconds + 0.05),
+            }
+            updated_config = dict(job.config or {})
+            updated_config['voiceover_preflight'] = preflight
+            job.config = updated_config
+            db.commit()
+            if not preflight['fits_timeline']:
+                over_by = round(float(actual_voice_seconds) - max_voice_seconds, 2)
+                raise RuntimeError(
+                    'Voice-over terlalu panjang: '
+                    f'{actual_voice_seconds:.2f} detik, slot maksimum {max_voice_seconds:.2f} detik '
+                    'karena 5 detik terakhir dicadangkan untuk closing. '
+                    f'Ringkas sekitar {over_by:.2f} detik atau perpanjang durasi video.'
+                )
+
         render_video(
             job.config,
             output_path,
@@ -6934,6 +13548,282 @@ def render_job(
         db.close()
 
 
+# B18C_OPENAI_COPY_BACKEND_START
+def b18c_extract_output_text(response_data: dict[str, Any]) -> str:
+    for item in response_data.get("output") or []:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        for content in item.get("content") or []:
+            if (
+                isinstance(content, dict)
+                and content.get("type") == "output_text"
+                and content.get("text")
+            ):
+                return str(content["text"]).strip()
+    return ""
+
+
+def b18c_clean_copy_options(
+    values: Any,
+    *,
+    max_words: int,
+    max_chars: int,
+    label: str,
+    expected_count: int,
+) -> list[str]:
+    cleaned: list[str] = []
+
+    for raw in values if isinstance(values, list) else []:
+        value = re.sub(r"\s+", " ", str(raw or "")).strip()
+        value = value.strip('"“”\'`-• ')
+        value = re.sub(r"[.!?]+$", "", value).strip()
+
+        if not value:
+            continue
+
+        if len(value.split()) > max_words:
+            continue
+
+        if len(value) > max_chars:
+            continue
+
+        if value.casefold() not in {item.casefold() for item in cleaned}:
+            cleaned.append(value)
+
+    if len(cleaned) != expected_count:
+        raise RuntimeError(
+            f"OpenAI menghasilkan {len(cleaned)} {label}; "
+            f"seharusnya {expected_count}."
+        )
+
+    return cleaned
+
+
+def b18c_openai_copy_request(
+    *,
+    product_names: list[str],
+    payload: AICopyGenerateRequest,
+) -> dict[str, Any]:
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY belum dikonfigurasi")
+
+    hook_count = 0 if payload.mode == "cta" else 3
+    cta_count = 0 if payload.mode == "hook" else 3
+
+    promo_context = "Promo tidak aktif."
+    if payload.promo_enabled:
+        promo_parts: list[str] = []
+        if payload.promo_text:
+            promo_parts.append(f'Teks promo exact: "{payload.promo_text.strip()}"')
+        if payload.promo_min_amount > 0:
+            promo_parts.append(
+                "Minimum belanja exact: "
+                + format_rupiah(payload.promo_min_amount)
+            )
+        promo_parts.append(
+            f"Diskon exact: {payload.promo_discount_percent}%"
+        )
+        promo_context = "; ".join(promo_parts)
+
+    system_prompt = (
+        "Kamu adalah copywriter direct-response berbahasa Indonesia untuk "
+        "iklan video pendek SpaceCraft. Buat copy natural, ringkas, kuat, "
+        "dan tidak berlebihan. Jangan menerjemahkan atau mengubah nama produk. "
+        "Jangan mengarang promo, harga, stok terbatas, urgensi palsu, jaminan, "
+        "klaim kesehatan, atau klaim yang tidak diberikan. Hook maksimal 12 kata. "
+        "CTA maksimal 10 kata. Jangan pakai emoji, tanda kutip, hashtag, atau "
+        "akhiran titik. Setiap opsi harus berbeda secara nyata."
+    )
+
+    user_prompt = "\n".join([
+        f"Mode: {payload.mode}",
+        "Produk exact: " + " | ".join(product_names),
+        f"Audience: {payload.audience}",
+        f"Template: {payload.creative_template}",
+        f"Format: {payload.aspect_ratio}",
+        f"Durasi video: {payload.duration_seconds} detik",
+        promo_context,
+        f"Hook saat ini: {(payload.current_hook or '-').strip()}",
+        f"CTA saat ini: {(payload.current_cta or '-').strip()}",
+        f"Hasilkan tepat {hook_count} hook dan tepat {cta_count} CTA.",
+        "Nama produk tidak wajib disebut. Jika promo disebut, nilainya harus persis.",
+    ])
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "hooks": {
+                "type": "array",
+                "minItems": hook_count,
+                "maxItems": hook_count,
+                "items": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 180,
+                },
+            },
+            "ctas": {
+                "type": "array",
+                "minItems": cta_count,
+                "maxItems": cta_count,
+                "items": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 140,
+                },
+            },
+        },
+        "required": ["hooks", "ctas"],
+        "additionalProperties": False,
+    }
+
+    request_body = {
+        "model": OPENAI_COPY_MODEL,
+        "store": False,
+        "input": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "spacecraft_hook_cta_options",
+                "description": "Tiga opsi hook dan CTA iklan yang tervalidasi.",
+                "strict": True,
+                "schema": schema,
+            },
+            "verbosity": "low",
+        },
+        "max_output_tokens": 500,
+    }
+
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            response = client.post(
+                f"{OPENAI_BASE_URL}/responses",
+                headers={
+                    "Authorization": f"Bearer {OPENAI_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json=request_body,
+            )
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"OpenAI tidak dapat dihubungi: {exc}") from exc
+
+    if response.status_code >= 400:
+        detail = ""
+        try:
+            body = response.json()
+            detail = str(
+                (body.get("error") or {}).get("message")
+                or body.get("detail")
+                or ""
+            )
+        except Exception:
+            detail = response.text[:500]
+        raise RuntimeError(
+            f"OpenAI HTTP {response.status_code}: "
+            f"{detail or 'request gagal'}"
+        )
+
+    data = response.json()
+    output_text = b18c_extract_output_text(data)
+    if not output_text:
+        raise RuntimeError("OpenAI tidak mengembalikan output_text")
+
+    try:
+        parsed = json.loads(output_text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Output OpenAI bukan JSON valid") from exc
+
+    hooks = b18c_clean_copy_options(
+        parsed.get("hooks"),
+        max_words=12,
+        max_chars=180,
+        label="hook",
+        expected_count=hook_count,
+    )
+    ctas = b18c_clean_copy_options(
+        parsed.get("ctas"),
+        max_words=10,
+        max_chars=140,
+        label="CTA",
+        expected_count=cta_count,
+    )
+
+    return {
+        "hooks": hooks,
+        "ctas": ctas,
+        "model": str(data.get("model") or OPENAI_COPY_MODEL),
+        "response_id": data.get("id"),
+    }
+
+
+@router.get("/api/ai-copy/status")
+def ai_copy_status():
+    return {
+        "ok": True,
+        "provider": "openai",
+        "configured": bool(OPENAI_API_KEY),
+        "model": OPENAI_COPY_MODEL,
+        "max_hook_words": 12,
+        "max_cta_words": 10,
+        "options_per_type": 3,
+    }
+
+
+@router.post("/api/ai-copy/generate")
+def generate_ai_hook_cta(
+    payload: AICopyGenerateRequest,
+    db: Session = Depends(get_db),
+):
+    if not OPENAI_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "OPENAI_API_KEY belum dikonfigurasi pada server. "
+                "Tambahkan key ke /opt/product-ads-studio/.env lalu restart app."
+            ),
+        )
+
+    products = list(
+        db.scalars(
+            select(Product).where(
+                Product.id.in_(
+                    payload.product_ids
+                ),
+                ads_published_product_condition(),
+            )
+        ).all()
+    )
+    by_id = {item.id: item for item in products}
+    missing = [item for item in payload.product_ids if item not in by_id]
+
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail="Produk tidak ditemukan: " + ", ".join(map(str, missing)),
+        )
+
+    ordered_names = [by_id[item].name for item in payload.product_ids]
+
+    try:
+        result = b18c_openai_copy_request(
+            product_names=ordered_names,
+            payload=payload,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return {
+        "ok": True,
+        "mode": payload.mode,
+        "product_names": ordered_names,
+        **result,
+    }
+# B18C_OPENAI_COPY_BACKEND_END
+
+
 @router.get("/api/voiceover/status")
 def voiceover_status():
     return {
@@ -6968,41 +13858,226 @@ def voiceover_voices():
     }
 
 
-@router.post("/api/voiceover/preview")
-def voiceover_preview(
-    payload: VoicePreviewRequest,
+# VOICE_DRAFT_ROUTES_V1
+@router.post('/api/voiceover/draft')
+def voiceover_draft(payload: VoiceDraftRequest, db: Session = Depends(get_db)):
+    product_ids = list(dict.fromkeys(int(item) for item in payload.product_ids if int(item) > 0))
+    products = list(db.scalars(select(Product).where(
+                Product.id.in_(product_ids),
+                ads_published_product_condition(),
+            )).all())
+    products_by_id = {item.id: item for item in products}
+    missing = [item for item in product_ids if item not in products_by_id]
+    if missing:
+        raise HTTPException(status_code=404, detail='Produk tidak ditemukan: ' + ', '.join(str(item) for item in missing))
+    ordered_products = [products_by_id[item] for item in product_ids]
+    aliases = [compact_voice_product_alias(item.name) for item in ordered_products]
+    protected_terms = list(dict.fromkeys([item.name for item in ordered_products] + aliases))
+    draft_text = build_catalog_voiceover_draft(
+        products=ordered_products,
+        audience=payload.audience,
+        duration_seconds=payload.duration_seconds,
+        promo_enabled=payload.promo_enabled,
+        promo_min_amount=payload.promo_min_amount,
+        promo_discount_percent=payload.promo_discount_percent,
+        promo_text=payload.promo_text,
+        compact=(payload.draft_style == 'compact'),
+    )
+    estimated_seconds = round(max(1, len(draft_text.split())) / 2.35, 1)
+    max_seconds = voiceover_max_seconds(payload.duration_seconds)
+    fits_timeline = estimated_seconds <= max_seconds
+    over_by = round(max(0.0, estimated_seconds - max_seconds), 1)
+    warning = None if fits_timeline else (
+        'Draft diperkirakan terlalu panjang: '
+        f'{estimated_seconds} detik, slot VO {max_seconds} detik. '
+        'Klik Ringkas Otomatis atau perpanjang durasi sebelum preview.'
+    )
+    return {
+        'ok': True,
+        'draft_text': draft_text,
+        'tts_text': draft_text,
+        'draft_style': payload.draft_style,
+        'protected_terms': protected_terms,
+        'voice_aliases': aliases,
+        'estimated_seconds': estimated_seconds,
+        'target_duration_seconds': payload.duration_seconds,
+        'closing_reserved_seconds': B18D_CLOSING_RESERVED_SECONDS,
+        'timeline_buffer_seconds': B18D_TIMELINE_BUFFER_SECONDS,
+        'max_voiceover_seconds': max_seconds,
+        'fits_timeline': fits_timeline,
+        'over_by_seconds': over_by,
+        'warning': warning,
+    }
+
+@router.post("/api/voiceover/normalize")
+def voiceover_normalize(
+    payload: VoiceNormalizeRequest,
 ):
-    preview_dir = (
-        STORAGE_ROOT
-        / "voice-previews"
+    normalized = normalize_tts_text_indonesian(
+        payload.text,
+        payload.protected_terms,
     )
 
-    filename = (
-        f"preview-{uuid.uuid4().hex}.mp3"
-    )
+    return {
+        "ok": True,
+        "normalized_text": normalized,
+        "protected_terms": payload.protected_terms,
+    }
 
-    destination = (
-        preview_dir
-        / filename
-    )
 
+@router.post("/api/voiceover/preview")
+def voiceover_preview(payload: VoicePreviewRequest):
+    asset_id = uuid.uuid4().hex
+    preview_dir = STORAGE_ROOT / B18G_PREVIEW_VOICE_DIR
+    destination = preview_dir / f"preview-{asset_id}.mp3"
+    metadata_path = preview_dir / f"preview-{asset_id}.json"
     try:
+        normalized_text = normalize_tts_text_indonesian(payload.text, payload.protected_terms)
         generate_elevenlabs_audio(
             voice_id=payload.voice_id,
-            text=payload.text,
+            text=normalized_text,
             destination=destination,
+        )
+        actual_duration = media_duration_seconds(destination)
+        if actual_duration is None:
+            raise RuntimeError("Durasi preview ElevenLabs tidak dapat dibaca")
+        fingerprint = voice_asset_fingerprint(payload.voice_id, normalized_text)
+        metadata = {
+            "asset_id": asset_id,
+            "fingerprint": fingerprint,
+            "approved": False,
+            "voice_id": payload.voice_id,
+            "normalized_text": normalized_text,
+            "model_id": ELEVENLABS_MODEL_ID,
+            "language_code": ELEVENLABS_LANGUAGE_CODE,
+            "output_format": ELEVENLABS_OUTPUT_FORMAT,
+            "speed": B18G_VOICE_SPEED,
+            "duration_seconds": round(float(actual_duration), 3),
+            "created_at": now().isoformat(),
+        }
+        write_voice_metadata(metadata_path, metadata)
+    except Exception as error:
+        destination.unlink(missing_ok=True)
+        metadata_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    max_seconds = voiceover_max_seconds(
+        payload.target_duration_seconds,
+        payload.closing_reserved_seconds,
+    )
+    actual_duration = round(float(actual_duration), 3)
+    fits_timeline = actual_duration <= max_seconds
+    over_by = round(max(0.0, actual_duration - max_seconds), 3)
+    return {
+        "ok": True,
+        "preview_asset_id": asset_id,
+        "fingerprint": fingerprint,
+        "audio_url": f"/media/{B18G_PREVIEW_VOICE_DIR}/preview-{asset_id}.mp3",
+        "normalized_text": normalized_text,
+        "actual_duration_seconds": actual_duration,
+        "target_duration_seconds": payload.target_duration_seconds,
+        "closing_reserved_seconds": payload.closing_reserved_seconds,
+        "timeline_buffer_seconds": B18D_TIMELINE_BUFFER_SECONDS,
+        "max_voiceover_seconds": max_seconds,
+        "fits_timeline": fits_timeline,
+        "over_by_seconds": over_by,
+        "voice_id": payload.voice_id,
+        "model_id": ELEVENLABS_MODEL_ID,
+        "language_code": ELEVENLABS_LANGUAGE_CODE,
+        "output_format": ELEVENLABS_OUTPUT_FORMAT,
+        "speed": B18G_VOICE_SPEED,
+        "warning": None if fits_timeline else (
+            "Voice-over terlalu panjang "
+            f"{over_by:.2f} detik. Ringkas draft atau perpanjang durasi video."
+        ),
+    }
+
+
+@router.post("/api/voiceover/fit")
+def voiceover_fit(
+    payload: VoiceFitRequest,
+):
+    try:
+        result = fit_voice_preview_asset(
+            asset_id=payload.preview_asset_id,
+            voice_id=payload.voice_id,
+            text=payload.text,
+            protected_terms=payload.protected_terms,
+            target_duration_seconds=payload.target_duration_seconds,
+            closing_reserved_seconds=payload.closing_reserved_seconds,
         )
     except Exception as error:
         raise HTTPException(
-            status_code=502,
+            status_code=422,
             detail=str(error),
         ) from error
 
     return {
         "ok": True,
-        "audio_url": (
-            f"/media/voice-previews/{filename}"
-        ),
+        **result,
+        "max_over_seconds": B18H_MAX_OVER_SECONDS,
+        "max_speed_multiplier": B18H_MAX_SPEED_MULTIPLIER,
+    }
+
+
+@router.post("/api/voiceover/approve")
+def voiceover_approve(payload: VoiceApproveRequest):
+    asset_id = validate_voice_asset_id(payload.preview_asset_id)
+    preview_audio = voice_preview_audio_path(asset_id)
+    preview_metadata_path = voice_preview_metadata_path(asset_id)
+    if not preview_audio.is_file() or preview_audio.stat().st_size < 1000:
+        raise HTTPException(
+            status_code=404,
+            detail="Preview voice tidak ditemukan. Buat preview ulang.",
+        )
+    try:
+        preview_metadata = read_voice_metadata(preview_metadata_path)
+        normalized_text = normalize_tts_text_indonesian(payload.text, payload.protected_terms)
+        expected_fingerprint = voice_asset_fingerprint(payload.voice_id, normalized_text)
+        if expected_fingerprint != payload.fingerprint:
+            raise RuntimeError("Fingerprint preview berubah. Preview ulang sebelum approve.")
+        if str(preview_metadata.get("fingerprint") or "") != expected_fingerprint:
+            raise RuntimeError("Metadata preview tidak cocok")
+        if str(preview_metadata.get("voice_id") or "") != payload.voice_id:
+            raise RuntimeError("Voice ID preview berubah")
+        if str(preview_metadata.get("normalized_text") or "") != normalized_text:
+            raise RuntimeError("Teks preview berubah")
+        actual_duration = media_duration_seconds(preview_audio)
+        if actual_duration is None:
+            raise RuntimeError("Durasi preview tidak dapat dibaca")
+        approved_audio = approved_voice_audio_path(asset_id)
+        approved_metadata_path = approved_voice_metadata_path(asset_id)
+        approved_audio.parent.mkdir(parents=True, exist_ok=True)
+        temporary_audio = approved_audio.with_suffix(".mp3.tmp")
+        shutil.copy2(preview_audio, temporary_audio)
+        temporary_audio.replace(approved_audio)
+        approved_metadata = {
+            **preview_metadata,
+            "approved": True,
+            "approved_at": now().isoformat(),
+            "duration_seconds": round(float(actual_duration), 3),
+        }
+        write_voice_metadata(approved_metadata_path, approved_metadata)
+        approved = resolve_approved_voice_asset(
+            asset_id=asset_id,
+            expected_fingerprint=expected_fingerprint,
+            expected_voice_id=payload.voice_id,
+            expected_text=normalized_text,
+        )
+    except Exception as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return {
+        "ok": True,
+        "approved_asset_id": asset_id,
+        "fingerprint": expected_fingerprint,
+        "audio_url": f"/media/{B18G_APPROVED_VOICE_DIR}/approved-{asset_id}.mp3",
+        "normalized_text": normalized_text,
+        "duration_seconds": approved["duration_seconds"],
+        "voice_id": payload.voice_id,
+        "model_id": ELEVENLABS_MODEL_ID,
+        "language_code": ELEVENLABS_LANGUAGE_CODE,
+        "output_format": ELEVENLABS_OUTPUT_FORMAT,
+        "speed": B18G_VOICE_SPEED,
+        "reusable_for_render": True,
     }
 
 
@@ -8241,7 +15316,7 @@ def create_campaign(
             )
         ),
         status="queued",
-        variations=payload.variations,
+        variations=effective_variations,
         settings={
             **payload.model_dump(),
             "product_ids": selected_product_ids,
@@ -8256,6 +15331,22 @@ def create_campaign(
     )
 
     db.add(campaign)
+    db.flush()
+
+    # B19C_ASSIGN_CAMPAIGN_ID
+    b19c_creative_set.campaign_id = (
+        campaign.id
+    )
+
+    b19c_creative_set.status = (
+        "rendering"
+        if b19c_creative_set.source_type
+        == "spacecraft"
+        else "internal_render"
+    )
+
+    b19c_creative_set.updated_at = now()
+
     db.commit()
     db.refresh(campaign)
 
@@ -8377,6 +15468,51 @@ def create_multi_product_campaign(
     )
 
 
+def build_unique_random_product_orders(
+    product_ids: list[int],
+    variations: int,
+    *,
+    random_source: random.Random | random.SystemRandom | None = None,
+) -> list[list[int]]:
+    source = random_source or random.SystemRandom()
+    orders: list[list[int]] = []
+    seen_orders: set[tuple[int, ...]] = set()
+
+    for _ in range(variations):
+        candidate = list(product_ids)
+        source.shuffle(candidate)
+
+        while tuple(candidate) in seen_orders:
+            source.shuffle(candidate)
+
+        seen_orders.add(tuple(candidate))
+        orders.append(candidate)
+
+    return orders
+
+
+def raw_catalog_should_auto_randomize_orders(
+    recipes: list[RawCatalogVariantRecipe],
+    selected_product_ids: list[int],
+) -> bool:
+    if not recipes:
+        return True
+
+    base_order = tuple(selected_product_ids)
+    recipe_orders = [
+        tuple(recipe.product_order or [])
+        for recipe in recipes
+    ]
+
+    if not recipe_orders:
+        return True
+
+    # The UI can generate a matrix where every variant carries ORDER-A.
+    # In that case the campaign is still "auto generate variations", so
+    # the backend should create a fresh clip order for each rendered video.
+    return all(order == base_order for order in recipe_orders)
+
+
 @router.post("/api/campaigns/raw-video-catalog")
 def create_raw_video_catalog_campaign(
     payload: RawVideoCatalogRequest,
@@ -8458,10 +15594,85 @@ def create_raw_video_catalog_campaign(
                 ),
             )
 
+    # B18G_CAMPAIGN_APPROVED_VOICE_VALIDATE
+    approved_voice_master: dict[str, Any] | None = None
+
+    if payload.voiceover_enabled:
+        if (
+            not payload.approved_voice_asset_id
+            or not payload.approved_voice_fingerprint
+            or payload.approved_voice_duration_seconds is None
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Preview voice yang sudah di-approve wajib tersedia. "
+                    "Preview dan Approve Draft ulang."
+                ),
+            )
+        try:
+            approved_voice_master = resolve_approved_voice_asset(
+                asset_id=payload.approved_voice_asset_id,
+                expected_fingerprint=payload.approved_voice_fingerprint,
+                expected_voice_id=payload.voice_id,
+            )
+        except Exception as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        if abs(
+            float(approved_voice_master["duration_seconds"])
+            - float(payload.approved_voice_duration_seconds)
+        ) > 0.25:
+            raise HTTPException(
+                status_code=422,
+                detail="Durasi approved voice berubah. Preview dan approve ulang.",
+            )
+
     selected_product_ids = [
         item.product_id
         for item in payload.product_clips
     ]
+
+    active_variant_recipes = [
+        recipe
+        for recipe in payload.variant_recipes
+        if recipe.enabled
+    ]
+
+    if len(active_variant_recipes) > 24:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Maksimal 24 kombinasi variant "
+                "dalam satu campaign."
+            ),
+        )
+
+    for recipe_index, recipe in enumerate(
+        active_variant_recipes,
+        start=1,
+    ):
+        if recipe.product_order is None:
+            continue
+
+        if (
+            len(recipe.product_order)
+            != len(selected_product_ids)
+            or set(recipe.product_order)
+            != set(selected_product_ids)
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Product order recipe "
+                    f"{recipe_index} tidak valid."
+                ),
+            )
+
+    effective_variations = (
+        len(active_variant_recipes)
+        if active_variant_recipes
+        else payload.variations
+    )
 
 
     if not 5 <= len(selected_product_ids) <= 6:
@@ -8493,10 +15704,39 @@ def create_raw_video_catalog_campaign(
             ),
         )
 
+    # B19A_LINKED_CATALOG_RENDER_GUARD
+    b19a_linked_catalog = (
+        b19a_validate_linked_catalog(
+            payload,
+            selected_product_ids,
+            db,
+        )
+    )
+
+    # B19B_RENDER_READINESS_GUARD
+    b19b_readiness = (
+        b19b_validate_catalog_readiness(
+            payload,
+            db,
+        )
+    )
+
+    # B19C_CREATIVE_SET_RENDER_GUARD
+    b19c_creative_set = (
+        b19c_validate_for_render(
+            payload,
+            selected_product_ids,
+            db,
+        )
+    )
+
     products = list(
         db.scalars(
             select(Product).where(
-                Product.id.in_(selected_product_ids)
+                Product.id.in_(
+                    selected_product_ids
+                ),
+                ads_published_product_condition(),
             )
         ).all()
     )
@@ -8527,6 +15767,14 @@ def create_raw_video_catalog_campaign(
     ]
 
     raw_clips: list[dict[str, Any]] = []
+    price_overrides = (
+        b19a_linked_catalog.get(
+            "price_overrides",
+            {},
+        )
+        if b19a_linked_catalog
+        else {}
+    )
 
     for selection in payload.product_clips:
         clip = None
@@ -8750,7 +15998,29 @@ def create_raw_video_catalog_campaign(
             selection.product_id
         ]
         clip["product_name"] = product.name
-        if product.price_value is not None:
+        price_override = price_overrides.get(
+            product.id
+        )
+        if (
+            price_override
+            and price_override.get(
+                "price_label"
+            )
+        ):
+            clip["product_price_label"] = (
+                price_override[
+                    "price_label"
+                ]
+            )
+            clip["product_price_value"] = (
+                price_override.get("price")
+            )
+            clip["pricing_layer"] = (
+                price_override.get(
+                    "pricing_layer"
+                )
+            )
+        elif product.price_value is not None:
             clip["product_price_label"] = format_rupiah(
                 product.price_value
             )
@@ -8809,6 +16079,27 @@ def create_raw_video_catalog_campaign(
 
     promo_label = raw_catalog_promo_label(payload)
 
+    layout_snapshot = (
+        build_raw_catalog_layout_snapshot(
+            raw_clips,
+            payload.aspect_ratio,
+        )
+    )
+
+    # B18I_ACQUIRE_SINGLE_SUBMISSION
+    (
+        request_fingerprint,
+        idempotency_key,
+        idempotency_client,
+        existing_response,
+    ) = acquire_raw_catalog_submission(
+        payload,
+        db,
+    )
+
+    if existing_response is not None:
+        return existing_response
+
     campaign = CreativeCampaign(
         product_id=anchor.id,
         name=(
@@ -8819,10 +16110,124 @@ def create_raw_video_catalog_campaign(
             )
         ),
         status="queued",
-        variations=payload.variations,
+        variations=effective_variations,
         settings={
             **payload.model_dump(),
             "render_mode": "raw_catalog",
+            # B19A_CAMPAIGN_CATALOG_SNAPSHOT
+            "catalog_source":
+                payload.catalog_source,
+            "catalog_code": (
+                b19a_linked_catalog[
+                    "catalog_code"
+                ]
+                if b19a_linked_catalog
+                else None
+            ),
+            "catalog_hash": (
+                b19a_linked_catalog[
+                    "catalog_hash"
+                ]
+                if b19a_linked_catalog
+                else None
+            ),
+            "catalog_name": (
+                b19a_linked_catalog[
+                    "catalog_name"
+                ]
+                if b19a_linked_catalog
+                else None
+            ),
+            "catalog_type": (
+                b19a_linked_catalog[
+                    "catalog_type"
+                ]
+                if b19a_linked_catalog
+                else None
+            ),
+            "catalog_flow_type": (
+                b19a_linked_catalog[
+                    "flow_type"
+                ]
+                if b19a_linked_catalog
+                else None
+            ),
+            "catalog_go_url": (
+                b19a_linked_catalog[
+                    "go_url"
+                ]
+                if b19a_linked_catalog
+                else None
+            ),
+            "source_code": (
+                b19a_linked_catalog[
+                    "source_code"
+                ]
+                if b19a_linked_catalog
+                else None
+            ),
+            "pricing_source": (
+                b19a_linked_catalog[
+                    "pricing_source"
+                ]
+                if b19a_linked_catalog
+                else payload.pricing_source
+            ),
+            "pricing_source_code": (
+                b19a_linked_catalog[
+                    "pricing_source_code"
+                ]
+                if b19a_linked_catalog
+                else None
+            ),
+            "pricing_layer": (
+                b19a_linked_catalog[
+                    "pricing_layer"
+                ]
+                if b19a_linked_catalog
+                else None
+            ),
+            "commerce_product_ids": (
+                b19a_linked_catalog[
+                    "commerce_product_ids"
+                ]
+                if b19a_linked_catalog
+                else None
+            ),
+            "creative_product_ids":
+                selected_product_ids,
+            "catalog_snapshot": (
+                b19a_linked_catalog[
+                    "snapshot"
+                ]
+                if b19a_linked_catalog
+                else None
+            ),
+            # B19B_READINESS_SNAPSHOT
+            "creative_readiness": (
+                b19b_readiness
+                if b19b_readiness
+                else None
+            ),
+            # B19C_CAMPAIGN_CREATIVE_SET_LINK
+            "creative_set_code": (
+                b19c_creative_set
+                .creative_set_code
+            ),
+            "creative_set_status": (
+                b19c_creative_set.status
+            ),
+            "creative_set_source": (
+                b19c_creative_set.source_type
+            ),
+            "creative_set_commerce_ready": (
+                bool(
+                    b19c_creative_set
+                    .commerce_ready
+                )
+            ),
+            "request_fingerprint": request_fingerprint,
+            "idempotency_guard": "b18i",
             "creative_template": payload.creative_template,
             "creative_template_label": template_label,
             "product_ids": selected_product_ids,
@@ -8833,6 +16238,17 @@ def create_raw_video_catalog_campaign(
             "product_count": len(ordered_products),
             "smart_visual_layout": True,
             "layout_snapshot": layout_snapshot,
+            "auto_variant_generator": bool(
+                active_variant_recipes
+            ),
+            "variant_recipe_count": len(
+                active_variant_recipes
+            ),
+            "variant_recipes": [
+                recipe.model_dump()
+                for recipe
+                in active_variant_recipes
+            ],
         },
         created_at=now(),
         updated_at=now(),
@@ -8844,49 +16260,261 @@ def create_raw_video_catalog_campaign(
 
     jobs: list[RenderJob] = []
 
-    for index in range(payload.variations):
-        hook = hooks[index % len(hooks)]
-        cta = ctas[index % len(ctas)]
+    auto_randomize_orders = (
+        raw_catalog_should_auto_randomize_orders(
+            active_variant_recipes,
+            selected_product_ids,
+        )
+    )
+
+    auto_product_orders = (
+        build_unique_random_product_orders(
+            selected_product_ids,
+            effective_variations,
+        )
+    )
+
+    for index in range(effective_variations):
+        recipe = (
+            active_variant_recipes[index]
+            if active_variant_recipes
+            else None
+        )
+
+        if auto_randomize_orders:
+            recipe_order = auto_product_orders[index]
+        else:
+            recipe_order = (
+                recipe.product_order
+                if (
+                    recipe is not None
+                    and recipe.product_order
+                )
+                else auto_product_orders[index]
+            )
+
+        recipe_products = [
+            products_by_id[product_id]
+            for product_id in recipe_order
+        ]
+
+        recipe_clips_by_product = {
+            int(item["product_id"]): item
+            for item in raw_clips
+        }
+
+        recipe_raw_clips = [
+            recipe_clips_by_product[
+                product_id
+            ]
+            for product_id in recipe_order
+        ]
+
+        recipe_layout_snapshot = (
+            build_raw_catalog_layout_snapshot(
+                recipe_raw_clips,
+                payload.aspect_ratio,
+            )
+        )
+
+        # B18C_RAW_COPY_SELECTION_START
+        campaign_hook = (payload.hook or "").strip()
+        campaign_cta = (payload.cta or "").strip()
+
+        hook = (
+            (recipe.hook or "").strip()
+            if recipe is not None
+            else ""
+        ) or campaign_hook or hooks[index % len(hooks)]
+
+        cta = (
+            (recipe.cta or "").strip()
+            if recipe is not None
+            else ""
+        ) or campaign_cta or ctas[index % len(ctas)]
+        # B18C_RAW_COPY_SELECTION_END
+
+        recipe_promo_label = (
+            (recipe.promo_text or "").strip()
+            if recipe is not None
+            else ""
+        ) or promo_label
+
         voiceover_script = None
 
         if payload.voiceover_enabled:
-            voiceover_script = build_voiceover_script(
-                product=anchor,
-                analysis=analysis,
-                hook=hook,
-                cta=cta,
-                duration_seconds=payload.duration_seconds,
-                mode=payload.voiceover_mode,
-                custom_text=payload.voiceover_text,
-                audience=payload.audience,
-                min_order_qty=payload.min_order_qty,
-                products=ordered_products,
-                analyses=analyses,
+            voiceover_products = (
+                recipe_products
+                if recipe is not None
+                else ordered_products
+            )
+            recipe_voiceover_text = (
+                (recipe.voiceover_text or "").strip()
+                if recipe is not None
+                else ""
             )
 
+            if recipe_voiceover_text:
+                voiceover_script = (
+                    recipe_voiceover_text
+                )
+            else:
+                voiceover_script = build_voiceover_script(
+                    product=recipe_products[0],
+                    analysis=analyses.get(
+                        recipe_products[0].id
+                    ),
+                    hook=hook,
+                    cta=cta,
+                    duration_seconds=payload.duration_seconds,
+                    mode=payload.voiceover_mode,
+                    custom_text=payload.voiceover_text,
+                    audience=payload.audience,
+                    min_order_qty=payload.min_order_qty,
+                    products=voiceover_products,
+                    analyses=analyses,
+                )
+
             if (
-                promo_label
+                recipe_promo_label
                 and payload.voiceover_mode == "auto"
+                and not recipe_voiceover_text
             ):
                 voiceover_script = (
-                    f"{voiceover_script} {promo_label}."
+                    f"{voiceover_script} "
+                    f"{recipe_promo_label}."
+                )
+
+        # VOICE_DRAFT_RENDER_NORMALIZE_V1
+        if payload.voiceover_enabled and voiceover_script:
+            voiceover_script = normalize_tts_text_indonesian(
+                voiceover_script,
+                [
+                    item.name
+                    for item in voiceover_products
+                ],
+            )
+
+        # B18G_VARIANT_FINGERPRINT_GUARD
+        if payload.voiceover_enabled:
+            if not approved_voice_master or not voiceover_script:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Approved voice master tidak tersedia",
+                )
+            expected_voice_fingerprint = voice_asset_fingerprint(
+                voice_id=str(payload.voice_id or ""),
+                text=voiceover_script,
+            )
+            if expected_voice_fingerprint != approved_voice_master["fingerprint"]:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "Variant mengubah naskah voice-over yang sudah di-approve. "
+                        "Hapus custom voice per variant atau preview ulang."
+                    ),
                 )
 
         config = {
             "render_mode": "raw_catalog",
+            # B19A_JOB_CATALOG_CONTEXT
+            "catalog_source":
+                payload.catalog_source,
+            "catalog_code": (
+                b19a_linked_catalog[
+                    "catalog_code"
+                ]
+                if b19a_linked_catalog
+                else None
+            ),
+            "catalog_hash": (
+                b19a_linked_catalog[
+                    "catalog_hash"
+                ]
+                if b19a_linked_catalog
+                else None
+            ),
+            "catalog_name": (
+                b19a_linked_catalog[
+                    "catalog_name"
+                ]
+                if b19a_linked_catalog
+                else None
+            ),
+            "catalog_go_url": (
+                b19a_linked_catalog[
+                    "go_url"
+                ]
+                if b19a_linked_catalog
+                else None
+            ),
+            "source_code": (
+                b19a_linked_catalog[
+                    "source_code"
+                ]
+                if b19a_linked_catalog
+                else None
+            ),
+            "pricing_source": (
+                b19a_linked_catalog[
+                    "pricing_source"
+                ]
+                if b19a_linked_catalog
+                else payload.pricing_source
+            ),
+            "pricing_source_code": (
+                b19a_linked_catalog[
+                    "pricing_source_code"
+                ]
+                if b19a_linked_catalog
+                else None
+            ),
+            "pricing_layer": (
+                b19a_linked_catalog[
+                    "pricing_layer"
+                ]
+                if b19a_linked_catalog
+                else None
+            ),
+            "commerce_product_ids": (
+                b19a_linked_catalog[
+                    "commerce_product_ids"
+                ]
+                if b19a_linked_catalog
+                else None
+            ),
+            "creative_product_ids":
+                recipe_order,
+            # B19C_JOB_CREATIVE_SET_LINK
+            "creative_set_code": (
+                b19c_creative_set
+                .creative_set_code
+            ),
+            "creative_set_status": (
+                b19c_creative_set.status
+            ),
+            "creative_set_source": (
+                b19c_creative_set.source_type
+            ),
+            "creative_set_commerce_ready": (
+                bool(
+                    b19c_creative_set
+                    .commerce_ready
+                )
+            ),
             "creative_template": payload.creative_template,
             "creative_template_label": template_label,
             "product_name": product_collection_name(
-                ordered_products
+                recipe_products
             ),
             "product_names": [
                 item.name
-                for item in ordered_products
+                for item in recipe_products
             ],
-            "product_ids": selected_product_ids,
-            "product_count": len(ordered_products),
+            "product_ids": recipe_order,
+            "product_count": len(recipe_products),
             "price_label": product_collection_price_label(
-                ordered_products
+                recipe_products
             ),
             "hook": hook,
             "cta": cta,
@@ -8894,20 +16522,49 @@ def create_raw_video_catalog_campaign(
             "min_order_qty": payload.min_order_qty,
             "duration_seconds": payload.duration_seconds,
             "aspect_ratio": payload.aspect_ratio,
-            "raw_clips": raw_clips,
+            "raw_clips": recipe_raw_clips,
             "smart_visual_layout": True,
-            "layout_snapshot": layout_snapshot,
-            "safe_area": layout_snapshot["safe_area"],
+            "layout_snapshot": recipe_layout_snapshot,
+            "safe_area": (
+                recipe_layout_snapshot["safe_area"]
+            ),
+            "variant_recipe": (
+                recipe.model_dump()
+                if recipe is not None
+                else {
+                    "label": (
+                        f"AUTO-{index + 1:02d}"
+                    ),
+                    "hook_code": (
+                        f"HOOK-{index + 1:02d}"
+                    ),
+                    "cta_code": (
+                        f"CTA-{index + 1:02d}"
+                    ),
+                    "promo_code": "PROMO-BASE",
+                    "order_code": (
+                        f"ORDER-RANDOM-{index + 1:02d}"
+                    ),
+                    "product_order": recipe_order,
+                    "auto_randomized_order": True,
+                    "voice_code": "VOICE-BASE",
+                }
+            ),
+            "experiment_label": (
+                recipe.label
+                if recipe is not None
+                else f"AUTO-{index + 1:02d}"
+            ),
             "promo": {
                 "enabled": bool(
                     payload.promo_enabled
-                    and promo_label
+                    and recipe_promo_label
                 ),
                 "min_amount": payload.promo_min_amount,
                 "discount_percent": (
                     payload.promo_discount_percent
                 ),
-                "label": promo_label,
+                "label": recipe_promo_label,
             },
             "music": (
                 selected_music
@@ -8932,6 +16589,12 @@ def create_raw_video_catalog_campaign(
                 "script": voiceover_script,
                 "model_id": ELEVENLABS_MODEL_ID,
                 "language_code": ELEVENLABS_LANGUAGE_CODE,
+                "approved_asset_id": payload.approved_voice_asset_id,
+                "approved_fingerprint": payload.approved_voice_fingerprint,
+                "approved_duration_seconds": payload.approved_voice_duration_seconds,
+                "reuse_approved_audio": bool(
+                    payload.voiceover_enabled and payload.approved_voice_asset_id
+                ),
             },
         }
 
@@ -8968,11 +16631,336 @@ def create_raw_video_catalog_campaign(
 
     db.commit()
 
+    idempotency_client.set(
+        idempotency_key,
+        f"campaign:{campaign.id}",
+        ex=RAW_CATALOG_IDEMPOTENCY_TTL_SECONDS,
+    )
+
+    return {
+        "ok": True,
+        "deduplicated": False,
+        "request_fingerprint": request_fingerprint,
+        "message": (
+            f"{effective_variations} raw video catalog "
+            "masuk antrean render"
+        ),
+        "campaign": campaign_to_dict(campaign),
+    }
+
+
+@router.post("/api/campaigns/single-product-video")
+def create_single_product_video_campaign(
+    payload: SingleProductVideoRequest,
+    db: Session = Depends(get_db),
+):
+    product = db.get(
+        Product,
+        payload.product_id,
+    )
+
+    if (
+        product is None
+        or not str(product.status or "").strip().lower()
+        == ADS_PUBLISHED_STATUS
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Produk tidak ditemukan atau belum published",
+        )
+
+    assets = list(
+        db.scalars(
+            select(ProductAsset)
+            .where(
+                ProductAsset.product_id == product.id,
+            )
+            .order_by(
+                ProductAsset.created_at.desc(),
+                ProductAsset.id.desc(),
+            )
+        ).all()
+    )
+
+    video_assets = [
+        asset
+        for asset in assets
+        if asset.asset_type == "video"
+    ]
+
+    if not video_assets:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Produk ini belum punya raw video. "
+                "Upload minimal 1 raw video dulu."
+            ),
+        )
+
+    raw_settings = load_raw_video_settings(
+        product.id
+    )
+
+    selected_video = None
+    requested_clip_id = str(
+        payload.raw_clip_id or ""
+    ).strip()
+
+    if requested_clip_id.startswith("asset-"):
+        try:
+            requested_asset_id = int(
+                requested_clip_id.removeprefix("asset-")
+            )
+        except ValueError:
+            requested_asset_id = 0
+
+        selected_video = next(
+            (
+                asset
+                for asset in video_assets
+                if asset.id == requested_asset_id
+            ),
+            None,
+        )
+
+    if selected_video is None:
+        selected_video = next(
+            (
+                asset
+                for asset in video_assets
+                if bool(
+                    raw_settings
+                    .get(str(asset.id), {})
+                    .get("is_primary")
+                )
+            ),
+            video_assets[0],
+        )
+
+    absolute_video_path = (
+        STORAGE_ROOT
+        / selected_video.relative_path
+    )
+
+    if (
+        not absolute_video_path.is_file()
+        or absolute_video_path.stat().st_size < 10_000
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="File raw video produk tidak ditemukan",
+        )
+
+    selected_settings = raw_settings.get(
+        str(selected_video.id),
+        {},
+    )
+
+    source_metadata = probe_uploaded_raw_video(
+        absolute_video_path
+    )
+    source_orientation = source_metadata.get(
+        "orientation"
+    )
+
+    raw_clip = {
+        "clip_id": f"asset-{selected_video.id}",
+        "asset_id": selected_video.id,
+        "archive": selected_video.relative_path,
+        "label": selected_video.original_name,
+        "source": "uploaded",
+        "mime_type": selected_video.mime_type,
+        "trim_start": float(
+            selected_settings.get("trim_start")
+            or 0.0
+        ),
+        "trim_end": (
+            float(selected_settings["trim_end"])
+            if selected_settings.get("trim_end")
+            is not None
+            else None
+        ),
+        "video_type": selected_settings.get(
+            "video_type",
+            "demo",
+        ),
+        "fit_mode": resolve_raw_catalog_fit_mode(
+            str(
+                selected_settings.get("fit_mode")
+                or "auto"
+            ),
+            str(
+                selected_settings.get("video_type")
+                or "demo"
+            ),
+            source_orientation,
+            payload.aspect_ratio,
+        ),
+        "source_orientation": source_orientation,
+        "source_width": source_metadata.get("width"),
+        "source_height": source_metadata.get("height"),
+        "source_duration_seconds": (
+            source_metadata.get("duration_seconds")
+        ),
+    }
+
+    image_items = image_sources(
+        product,
+        assets,
+    )[:payload.image_count]
+
+    if not image_items:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Produk ini belum punya image referensi "
+                "untuk single product campaign."
+            ),
+        )
+
+    price_label = (
+        format_rupiah(product.price_value)
+        if product.price_value is not None
+        else product.price_label
+        or "Cek harga"
+    )
+
+    hook = (
+        payload.hook
+        or f"{product.name}, detailnya makin kelihatan"
+    )
+    cta = (
+        payload.cta
+        or "Klik dan pesan lewat WhatsApp"
+    )
+
+    analysis = db.scalar(
+        select(ProductAnalysis).where(
+            ProductAnalysis.product_id == product.id
+        )
+    )
+
+    voiceover_script = None
+    if payload.voiceover_enabled:
+        voiceover_script = build_voiceover_script(
+            product=product,
+            analysis=analysis,
+            hook=hook,
+            cta=cta,
+            duration_seconds=payload.duration_seconds,
+            mode=payload.voiceover_mode,
+            custom_text=payload.voiceover_text,
+            audience="retail",
+            min_order_qty=1,
+        )
+
+    campaign = CreativeCampaign(
+        product_id=product.id,
+        name=(
+            payload.name
+            or f"{product.name} Single Product Video"
+        ),
+        status="queued",
+        variations=1,
+        settings={
+            **payload.model_dump(),
+            "render_mode": "single_product",
+            "product_id": product.id,
+            "product_name": product.name,
+            "product_ids": [product.id],
+            "product_names": [product.name],
+            "product_count": 1,
+            "price_label": price_label,
+            "raw_clip": raw_clip,
+            "image_source_count": len(image_items),
+            "voiceover": {
+                "enabled": bool(
+                    payload.voiceover_enabled
+                    and payload.voice_id
+                ),
+                "voice_id": payload.voice_id,
+                "mode": payload.voiceover_mode,
+                "script": voiceover_script,
+                "approved_asset_id": None,
+                "approved_fingerprint": None,
+            },
+            "single_product_mvp": True,
+        },
+        created_at=now(),
+        updated_at=now(),
+    )
+
+    db.add(campaign)
+    db.commit()
+    db.refresh(campaign)
+
+    config = {
+        "render_mode": "single_product",
+        "product_id": product.id,
+        "product_name": product.name,
+        "product_ids": [product.id],
+        "product_names": [product.name],
+        "product_count": 1,
+        "price_label": price_label,
+        "hook": hook,
+        "cta": cta,
+        "duration_seconds": payload.duration_seconds,
+        "aspect_ratio": payload.aspect_ratio,
+        "raw_clip": raw_clip,
+        "image_sources": image_items,
+        "creative_template": "single_product",
+        "creative_template_label": (
+            "Single Product Campaign"
+        ),
+        "voiceover": {
+            "enabled": bool(
+                payload.voiceover_enabled
+                and payload.voice_id
+            ),
+            "voice_id": payload.voice_id,
+            "mode": payload.voiceover_mode,
+            "script": voiceover_script,
+            "approved_asset_id": None,
+            "approved_fingerprint": None,
+        },
+        "voiceover_enabled": bool(
+            payload.voiceover_enabled
+            and payload.voice_id
+        ),
+        "audience": "retail",
+        "min_order_qty": 1,
+    }
+
+    job = RenderJob(
+        campaign_id=campaign.id,
+        variation_index=1,
+        status="queued",
+        config=config,
+    )
+
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    queued = render_queue().enqueue(
+        render_job,
+        job.id,
+        retry=Retry(
+            max=1,
+            interval=[10],
+        ),
+        job_timeout=RENDER_JOB_TIMEOUT_SECONDS,
+        result_ttl=86400,
+        failure_ttl=604800,
+    )
+
+    job.rq_job_id = queued.id
+    db.commit()
+
     return {
         "ok": True,
         "message": (
-            f"{payload.variations} raw video catalog "
-            "masuk antrean render"
+            "Single product campaign masuk antrean render"
         ),
         "campaign": campaign_to_dict(campaign),
     }
@@ -9433,6 +17421,1025 @@ def list_multi_product_campaigns(
                 )
             ) > 1
         ],
+    }
+
+
+
+
+
+
+
+
+# B15 SPACECRAFT CATALOG SELECTOR
+@router.get(
+    "/api/wabot/catalogs"
+)
+def get_spacecraft_catalogs():
+    if not SPACECRAFT_BASE_URL or not SPACECRAFT_WABOT_KEY:
+        return {
+            "ok": True,
+            "configured": False,
+            "catalogs": [],
+            "count": 0,
+            "message": (
+                "SpaceCraft Catalog API belum dikonfigurasi"
+            ),
+        }
+
+    endpoint = (
+        f"{SPACECRAFT_BASE_URL}/api/wabot/catalogs"
+    )
+
+    try:
+        response = httpx.get(
+            endpoint,
+            headers={
+                "X-SpaceCraft-Wabot-Key":
+                    SPACECRAFT_WABOT_KEY,
+                "Accept": "application/json",
+            },
+            timeout=10,
+            follow_redirects=True,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Gagal menjangkau SpaceCraft Catalog API: "
+                f"{type(exc).__name__}"
+            ),
+        ) from exc
+
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "SpaceCraft Catalog API mengembalikan HTTP "
+                f"{response.status_code}"
+            ),
+        )
+
+    try:
+        payload = response.json()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Response SpaceCraft bukan JSON valid",
+        ) from exc
+
+    raw_catalogs = payload.get("catalogs") or []
+    catalogs: list[dict[str, Any]] = []
+
+    for item in raw_catalogs:
+        if not isinstance(item, dict):
+            continue
+
+        code = wabot_normalize_code(
+            item.get("catalog_id")
+            or item.get("catalog_code")
+            or item.get("code")
+        )
+
+        if not code:
+            continue
+
+        catalogs.append({
+            "catalog_code": code,
+            "catalog_id": code,
+            "name": b11_clean_text(
+                item.get("name")
+                or item.get("headline")
+                or code
+            ),
+            "catalog_type": item.get("catalog_type"),
+            "flow_type": item.get("flow_type"),
+            "source_code": item.get("source_code"),
+            "campaign_name": item.get("campaign_name"),
+            "products_count": int(
+                item.get("products_count") or 0
+            ),
+            "go_url": item.get("go_url"),
+        })
+
+    return {
+        "ok": True,
+        "configured": True,
+        "source": "spacecraft",
+        "count": len(catalogs),
+        "catalogs": catalogs,
+        "synced_at": payload.get("synced_at"),
+    }
+
+
+# B16 ADS ATTRIBUTION BRIDGE
+def b16_send_spacecraft_event(
+    event_payload: dict[str, Any],
+) -> dict[str, Any]:
+    if (
+        not SPACECRAFT_BASE_URL
+        or not SPACECRAFT_WABOT_KEY
+    ):
+        return {
+            "ok": False,
+            "configured": False,
+            "status_code": None,
+            "message": (
+                "SpaceCraft attribution endpoint "
+                "belum dikonfigurasi"
+            ),
+        }
+
+    endpoint = (
+        f"{SPACECRAFT_BASE_URL}"
+        "/api/wabot/events"
+    )
+
+    try:
+        response = httpx.post(
+            endpoint,
+            headers={
+                "X-SpaceCraft-Wabot-Key":
+                    SPACECRAFT_WABOT_KEY,
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            json=event_payload,
+            timeout=10,
+            follow_redirects=True,
+        )
+    except Exception as exc:
+        return {
+            "ok": False,
+            "configured": True,
+            "status_code": None,
+            "message": (
+                "SpaceCraft attribution tidak "
+                "dapat dijangkau"
+            ),
+            "error": type(exc).__name__,
+        }
+
+    try:
+        response_payload = response.json()
+    except Exception:
+        response_payload = {
+            "raw": response.text[:500],
+        }
+
+    return {
+        "ok": 200 <= response.status_code < 300,
+        "configured": True,
+        "status_code": response.status_code,
+        "message": (
+            "Attribution tersinkronisasi"
+            if 200 <= response.status_code < 300
+            else (
+                "SpaceCraft mengembalikan HTTP "
+                f"{response.status_code}"
+            )
+        ),
+        "response": response_payload,
+    }
+
+
+# B17B LIVE FUNNEL DASHBOARD
+def b17_spacecraft_performance(
+    *,
+    days: int,
+    campaign_code: str,
+    catalog_code: str = "",
+    source_code: str = "",
+) -> dict[str, Any]:
+    if not SPACECRAFT_BASE_URL or not SPACECRAFT_WABOT_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="SpaceCraft Performance API belum dikonfigurasi",
+        )
+
+    params: dict[str, Any] = {
+        "days": max(1, min(365, int(days))),
+        "campaign_code": campaign_code,
+    }
+
+    if catalog_code:
+        params["catalog_code"] = catalog_code
+
+    if source_code:
+        params["source_code"] = source_code
+
+    try:
+        response = httpx.get(
+            f"{SPACECRAFT_BASE_URL}/api/wabot/performance",
+            headers={
+                "X-SpaceCraft-Wabot-Key": SPACECRAFT_WABOT_KEY,
+                "Accept": "application/json",
+            },
+            params=params,
+            timeout=20,
+            follow_redirects=True,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "SpaceCraft Performance API tidak dapat dijangkau: "
+                + type(exc).__name__
+            ),
+        ) from exc
+
+    try:
+        payload = response.json()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Response SpaceCraft Performance API bukan JSON",
+        ) from exc
+
+    if response.status_code != 200 or payload.get("ok") is not True:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "SpaceCraft Performance API mengembalikan HTTP "
+                f"{response.status_code}"
+            ),
+        )
+
+    return payload
+
+
+@router.get(
+    "/api/campaigns/{campaign_id}/wabot/performance"
+)
+def get_campaign_wabot_performance(
+    campaign_id: int,
+    days: int = 30,
+    db: Session = Depends(get_db),
+):
+    campaign = db.get(CreativeCampaign, campaign_id)
+
+    if campaign is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Campaign tidak ditemukan",
+        )
+
+    saved_config = wabot_load_config(campaign_id)
+
+    campaign_code = wabot_normalize_code(
+        saved_config.get("external_campaign_code")
+        or b11_campaign_code(campaign)
+    )
+
+    catalog_code = wabot_normalize_code(
+        saved_config.get("catalog_code")
+    )
+
+    source_code = wabot_normalize_code(
+        saved_config.get("source_code")
+        or "spacecraft_ads",
+        "spacecraft_ads",
+    )
+
+    spacecraft = b17_spacecraft_performance(
+        days=days,
+        campaign_code=campaign_code,
+        catalog_code=catalog_code,
+        source_code=source_code,
+    )
+
+    return {
+        "ok": True,
+        "campaign": {
+            "id": campaign.id,
+            "name": campaign.name,
+            "campaign_code": campaign_code,
+            "catalog_code": catalog_code or None,
+            "source_code": source_code,
+        },
+        "spacecraft": spacecraft,
+        "generated_at": now().isoformat(),
+    }
+
+
+@router.post(
+    "/api/campaigns/{campaign_id}/wabot/click"
+)
+def track_campaign_whatsapp_click(
+    campaign_id: int,
+    payload: B16WhatsAppClickRequest,
+    db: Session = Depends(get_db),
+):
+    campaign = db.get(
+        CreativeCampaign,
+        campaign_id,
+    )
+
+    if campaign is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Campaign tidak ditemukan",
+        )
+
+    # B19C_WABOT_COMMERCE_GUARD
+    b19c_campaign_guard(campaign)
+
+    saved_config = wabot_load_config(
+        campaign_id
+    )
+
+    campaign_code = wabot_normalize_code(
+        payload.campaign_code
+        or saved_config.get(
+            "external_campaign_code"
+        )
+        or b11_campaign_code(campaign)
+    )
+
+    catalog_code = wabot_normalize_code(
+        payload.catalog_code
+        or saved_config.get("catalog_code")
+    )
+
+    source_code = wabot_normalize_code(
+        payload.source_code
+        or saved_config.get("source_code")
+        or "spacecraft_ads",
+        "spacecraft_ads",
+    )
+
+    phone = wabot_normalize_phone(
+        payload.phone
+        or saved_config.get(
+            "whatsapp_number"
+        )
+    )
+
+    creative_code = wabot_normalize_code(
+        payload.creative_code
+        or f"{campaign_code}-MASTER"
+    )
+
+    if not campaign_code:
+        raise HTTPException(
+            status_code=422,
+            detail="Campaign code belum tersedia",
+        )
+
+    if not catalog_code:
+        raise HTTPException(
+            status_code=422,
+            detail="Catalog code belum tersedia",
+        )
+
+    occurred_at = now()
+    event_id = (
+        f"ADS-{campaign_id}-"
+        f"{int(occurred_at.timestamp() * 1000)}"
+    )
+
+    event_metadata = {
+        "event_id": event_id,
+        "origin": "ads.spacecraft.id",
+        "ads_event": "click_to_whatsapp",
+        "creative_campaign_id": campaign.id,
+        "creative_code": creative_code,
+        "campaign_name": campaign.name,
+        "opening_message":
+            payload.opening_message,
+        "destination_url":
+            payload.destination_url,
+    }
+
+    local_event = wabot_write_event(
+        campaign_id,
+        {
+            "event_type": "conversation",
+            "phone": phone or None,
+            "order_id": None,
+            "campaign_code": campaign_code,
+            "catalog_code": catalog_code,
+            "source_code": source_code,
+            "value": 0,
+            "payload": event_metadata,
+        },
+    )
+
+    spacecraft_event = {
+        "event_type": "ads_whatsapp_click",
+        "catalog_code": catalog_code,
+        "source_code": source_code,
+        "campaign_code": campaign_code,
+        "phone": phone or None,
+        "metadata": event_metadata,
+        "occurred_at": occurred_at.isoformat(),
+    }
+
+    spacecraft_result = (
+        b16_send_spacecraft_event(
+            spacecraft_event
+        )
+    )
+
+    return {
+        "ok": True,
+        "message": (
+            "Klik WhatsApp berhasil dicatat"
+        ),
+        "event_id": event_id,
+        "creative_code": creative_code,
+        "local_event": local_event,
+        "spacecraft": spacecraft_result,
+    }
+
+
+@router.get(
+    "/api/wabot/status"
+)
+def get_wabot_status():
+    return {
+        "ok": True,
+        "configured": bool(
+            WABOT_BASE_URL
+        ),
+        "base_url": (
+            WABOT_BASE_URL
+            if WABOT_BASE_URL
+            else None
+        ),
+        "api_key_configured": bool(
+            WABOT_API_KEY
+        ),
+        "mode": "preview_safe",
+        "automatic_send": False,
+    }
+
+
+@router.post(
+    "/api/wabot/test"
+)
+def test_wabot_connection():
+    if not WABOT_BASE_URL:
+        return {
+            "ok": False,
+            "configured": False,
+            "message": (
+                "WABOT_BASE_URL belum dikonfigurasi. "
+                "Preview payload tetap dapat digunakan."
+            ),
+        }
+
+    headers: dict[str, str] = {}
+
+    if WABOT_API_KEY:
+        headers["Authorization"] = (
+            f"Bearer {WABOT_API_KEY}"
+        )
+
+    candidates = [
+        f"{WABOT_BASE_URL}/health",
+        f"{WABOT_BASE_URL}/api/health",
+        WABOT_BASE_URL,
+    ]
+
+    attempts: list[dict[str, Any]] = []
+
+    for url in candidates:
+        try:
+            response = httpx.get(
+                url,
+                headers=headers,
+                timeout=5,
+                follow_redirects=True,
+            )
+
+            attempts.append({
+                "url": url,
+                "status_code":
+                    response.status_code,
+            })
+
+            if response.status_code < 500:
+                return {
+                    "ok": True,
+                    "configured": True,
+                    "message": (
+                        "WABot dapat dijangkau"
+                    ),
+                    "status_code":
+                        response.status_code,
+                    "endpoint": url,
+                    "attempts": attempts,
+                }
+
+        except Exception as exc:
+            attempts.append({
+                "url": url,
+                "error": str(exc)[:300],
+            })
+
+    return {
+        "ok": False,
+        "configured": True,
+        "message": (
+            "WABot belum dapat dijangkau"
+        ),
+        "attempts": attempts,
+    }
+
+
+@router.get(
+    "/api/campaigns/{campaign_id}/wabot"
+)
+def get_campaign_wabot(
+    campaign_id: int,
+    db: Session = Depends(get_db),
+):
+    campaign = db.get(
+        CreativeCampaign,
+        campaign_id,
+    )
+
+    if campaign is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Campaign tidak ditemukan",
+        )
+
+    jobs = list(
+        db.scalars(
+            select(RenderJob)
+            .where(
+                RenderJob.campaign_id
+                == campaign_id
+            )
+            .order_by(
+                RenderJob.variation_index
+            )
+        ).all()
+    )
+
+    saved_config = wabot_load_config(
+        campaign_id
+    )
+
+    payload = wabot_campaign_payload(
+        campaign,
+        jobs,
+        saved_config,
+    )
+
+    events = wabot_read_events(
+        campaign_id,
+        100,
+    )
+
+    return {
+        "ok": True,
+        "config": saved_config,
+        "payload": payload,
+        "events": events,
+        "summary":
+            wabot_event_summary(events),
+    }
+
+
+@router.put(
+    "/api/campaigns/{campaign_id}/wabot"
+)
+def save_campaign_wabot(
+    campaign_id: int,
+    payload: WABotCampaignRequest,
+    db: Session = Depends(get_db),
+):
+    campaign = db.get(
+        CreativeCampaign,
+        campaign_id,
+    )
+
+    if campaign is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Campaign tidak ditemukan",
+        )
+
+    # B19C_WABOT_COMMERCE_GUARD
+    b19c_campaign_guard(campaign)
+
+    saved = wabot_save_config(
+        campaign_id,
+        {
+            **payload.model_dump(),
+            "catalog_code":
+                wabot_normalize_code(
+                    payload.catalog_code
+                ),
+            "source_code":
+                wabot_normalize_code(
+                    payload.source_code,
+                    "spacecraft_ads",
+                ),
+            "external_campaign_code":
+                wabot_normalize_code(
+                    payload.external_campaign_code
+                ),
+            "whatsapp_number":
+                wabot_normalize_phone(
+                    payload.whatsapp_number
+                ),
+        },
+    )
+
+    jobs = list(
+        db.scalars(
+            select(RenderJob)
+            .where(
+                RenderJob.campaign_id
+                == campaign_id
+            )
+            .order_by(
+                RenderJob.variation_index
+            )
+        ).all()
+    )
+
+    return {
+        "ok": True,
+        "message": (
+            "Konfigurasi WABot campaign "
+            "berhasil disimpan"
+        ),
+        "config": saved,
+        "payload": wabot_campaign_payload(
+            campaign,
+            jobs,
+            saved,
+        ),
+    }
+
+
+@router.post(
+    "/api/campaigns/{campaign_id}/wabot/events"
+)
+def create_campaign_wabot_event(
+    campaign_id: int,
+    payload: WABotEventRequest,
+    db: Session = Depends(get_db),
+):
+    campaign = db.get(
+        CreativeCampaign,
+        campaign_id,
+    )
+
+    if campaign is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Campaign tidak ditemukan",
+        )
+
+    # B19C_WABOT_COMMERCE_GUARD
+    b19c_campaign_guard(campaign)
+
+    saved_config = wabot_load_config(
+        campaign_id
+    )
+
+    event = wabot_write_event(
+        campaign_id,
+        {
+            **payload.model_dump(),
+            "campaign_code": (
+                saved_config.get(
+                    "external_campaign_code"
+                )
+                or b11_campaign_code(
+                    campaign
+                )
+            ),
+            "catalog_code": (
+                payload.catalog_code
+                or saved_config.get(
+                    "catalog_code"
+                )
+                or None
+            ),
+            "source_code": (
+                payload.source_code
+                or saved_config.get(
+                    "source_code"
+                )
+                or "spacecraft_ads"
+            ),
+        },
+    )
+
+    return {
+        "ok": True,
+        "message": (
+            "Attribution event berhasil dicatat"
+        ),
+        "event": event,
+    }
+
+
+@router.get(
+    "/api/campaigns/{campaign_id}/performance"
+)
+def get_campaign_performance(
+    campaign_id: int,
+    db: Session = Depends(get_db),
+):
+    campaign = db.get(
+        CreativeCampaign,
+        campaign_id,
+    )
+
+    if campaign is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Campaign tidak ditemukan",
+        )
+
+    jobs = list(
+        db.scalars(
+            select(RenderJob)
+            .where(
+                RenderJob.campaign_id
+                == campaign_id
+            )
+            .order_by(
+                RenderJob.variation_index
+            )
+        ).all()
+    )
+
+    dashboard = (
+        performance_campaign_dashboard(
+            campaign,
+            jobs,
+        )
+    )
+
+    return {
+        "ok": True,
+        "dashboard": dashboard,
+    }
+
+
+@router.put(
+    "/api/campaigns/{campaign_id}"
+    "/jobs/{job_id}/performance"
+)
+def save_job_performance(
+    campaign_id: int,
+    job_id: int,
+    payload: PerformanceEntryRequest,
+    db: Session = Depends(get_db),
+):
+    campaign = db.get(
+        CreativeCampaign,
+        campaign_id,
+    )
+
+    if campaign is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Campaign tidak ditemukan",
+        )
+
+    job = db.get(
+        RenderJob,
+        job_id,
+    )
+
+    if (
+        job is None
+        or job.campaign_id
+            != campaign_id
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Render job tidak ditemukan",
+        )
+
+    metrics = performance_save(
+        campaign_id,
+        job_id,
+        payload.model_dump(),
+    )
+
+    return {
+        "ok": True,
+        "message": (
+            "Data performa berhasil disimpan"
+        ),
+        "job": performance_job_metadata(
+            job
+        ),
+        "metrics": metrics,
+    }
+
+
+@router.delete(
+    "/api/campaigns/{campaign_id}"
+    "/jobs/{job_id}/performance"
+)
+def delete_job_performance(
+    campaign_id: int,
+    job_id: int,
+    db: Session = Depends(get_db),
+):
+    job = db.get(
+        RenderJob,
+        job_id,
+    )
+
+    if (
+        job is None
+        or job.campaign_id
+            != campaign_id
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Render job tidak ditemukan",
+        )
+
+    redis_client = redis_connection()
+
+    redis_client.delete(
+        performance_key(
+            campaign_id,
+            job_id,
+        )
+    )
+
+    redis_client.srem(
+        performance_campaign_set_key(
+            campaign_id
+        ),
+        str(job_id),
+    )
+
+    return {
+        "ok": True,
+        "message": (
+            "Data performa berhasil dihapus"
+        ),
+    }
+
+
+@router.get(
+    "/api/campaigns/{campaign_id}"
+    "/performance/export"
+)
+def export_campaign_performance(
+    campaign_id: int,
+    format: Literal[
+        "json",
+        "csv",
+    ] = "json",
+    db: Session = Depends(get_db),
+):
+    campaign = db.get(
+        CreativeCampaign,
+        campaign_id,
+    )
+
+    if campaign is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Campaign tidak ditemukan",
+        )
+
+    jobs = list(
+        db.scalars(
+            select(RenderJob)
+            .where(
+                RenderJob.campaign_id
+                == campaign_id
+            )
+            .order_by(
+                RenderJob.variation_index
+            )
+        ).all()
+    )
+
+    dashboard = (
+        performance_campaign_dashboard(
+            campaign,
+            jobs,
+        )
+    )
+
+    return {
+        "ok": True,
+        "format": format,
+        "filename": (
+            f"{b11_campaign_code(campaign)}"
+            "-performance."
+            f"{format}"
+        ),
+        "content": (
+            performance_campaign_csv(
+                dashboard
+            )
+            if format == "csv"
+            else json.dumps(
+                dashboard,
+                ensure_ascii=False,
+                indent=2,
+            )
+        ),
+        "dashboard": (
+            dashboard
+            if format == "json"
+            else None
+        ),
+    }
+
+
+@router.get(
+    "/api/campaigns/{campaign_id}/ad-copy"
+)
+def get_campaign_ad_copy(
+    campaign_id: int,
+    db: Session = Depends(get_db),
+):
+    campaign = db.get(
+        CreativeCampaign,
+        campaign_id,
+    )
+
+    if campaign is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Campaign tidak ditemukan",
+        )
+
+    jobs = list(
+        db.scalars(
+            select(RenderJob)
+            .where(
+                RenderJob.campaign_id
+                == campaign_id
+            )
+            .order_by(
+                RenderJob.variation_index
+            )
+        ).all()
+    )
+
+    return {
+        "ok": True,
+        "copy": b11_campaign_copy(
+            campaign,
+            jobs,
+        ),
+    }
+
+
+@router.post(
+    "/api/campaigns/{campaign_id}/export-package"
+)
+def create_campaign_export_package(
+    campaign_id: int,
+    db: Session = Depends(get_db),
+):
+    campaign = db.get(
+        CreativeCampaign,
+        campaign_id,
+    )
+
+    if campaign is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Campaign tidak ditemukan",
+        )
+
+    jobs = list(
+        db.scalars(
+            select(RenderJob)
+            .where(
+                RenderJob.campaign_id
+                == campaign_id
+            )
+            .order_by(
+                RenderJob.variation_index
+            )
+        ).all()
+    )
+
+    package = b11_build_export_package(
+        campaign,
+        jobs,
+    )
+
+    return {
+        "ok": True,
+        "message": (
+            "Campaign export package "
+            "berhasil dibuat"
+        ),
+        "package": package,
     }
 
 

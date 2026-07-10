@@ -209,6 +209,41 @@ def get_db():
         db.close()
 
 
+# B18K_PUBLISHED_PRODUCT_FILTER
+ADS_VISIBLE_PRODUCT_STATUS = "published"
+
+
+def normalized_product_status(
+    value: Any,
+) -> str:
+    return str(value or "").strip().lower()
+
+
+def product_is_visible_in_ads(
+    product: Product,
+) -> bool:
+    return (
+        normalized_product_status(
+            product.status
+        )
+        == ADS_VISIBLE_PRODUCT_STATUS
+    )
+
+
+def ads_visible_product_condition():
+    return (
+        func.lower(
+            func.trim(
+                func.coalesce(
+                    Product.status,
+                    "",
+                )
+            )
+        )
+        == ADS_VISIBLE_PRODUCT_STATUS
+    )
+
+
 def product_to_dict(product: Product) -> dict[str, Any]:
     return {
         "id": product.id,
@@ -752,26 +787,54 @@ def home():
 def health(db: Session = Depends(get_db)):
     db.execute(select(1))
 
-    total = db.scalar(
+    published_total = db.scalar(
+        select(
+            func.count(Product.id)
+        ).where(
+            ads_visible_product_condition()
+        )
+    ) or 0
+
+    synced_total = db.scalar(
         select(func.count(Product.id))
     ) or 0
+
+    hidden_total = max(
+        0,
+        int(synced_total)
+        - int(published_total),
+    )
 
     return {
         "ok": True,
         "service": "product-ads-studio",
         "database": "connected",
-        "products": total,
+        "products": int(published_total),
+        "products_published": int(
+            published_total
+        ),
+        "products_hidden": hidden_total,
+        "products_total_synced": int(
+            synced_total
+        ),
+        "product_filter": (
+            ADS_VISIBLE_PRODUCT_STATUS
+        ),
     }
-
 
 @app.post("/api/products/sync")
 async def sync_products(
     db: Session = Depends(get_db),
 ):
-    source_products = await fetch_spacecraft_products()
+    source_products = (
+        await fetch_spacecraft_products()
+    )
 
     created = 0
     updated = 0
+    published_received = 0
+    hidden_received = 0
+    hidden_statuses: dict[str, int] = {}
 
     for source in source_products:
         external_id = str(
@@ -781,11 +844,38 @@ async def sync_products(
 
         exists = db.scalar(
             select(Product.id).where(
-                Product.external_id == external_id
+                Product.external_id
+                == external_id
             )
         )
 
-        sync_product_record(db, source)
+        status = normalized_product_status(
+            source.get("status")
+        )
+
+        if (
+            status
+            == ADS_VISIBLE_PRODUCT_STATUS
+        ):
+            published_received += 1
+        else:
+            hidden_received += 1
+            status_key = status or "unknown"
+            hidden_statuses[status_key] = (
+                hidden_statuses.get(
+                    status_key,
+                    0,
+                )
+                + 1
+            )
+
+        # Semua status tetap disinkronkan agar perubahan
+        # published -> draft/archived langsung tercatat.
+        # Hanya published yang dikeluarkan oleh Ads API.
+        sync_product_record(
+            db,
+            source,
+        )
 
         if exists:
             updated += 1
@@ -794,14 +884,39 @@ async def sync_products(
 
     db.commit()
 
+    published_local = db.scalar(
+        select(
+            func.count(Product.id)
+        ).where(
+            ads_visible_product_condition()
+        )
+    ) or 0
+
+    synced_total = db.scalar(
+        select(func.count(Product.id))
+    ) or 0
+
     return {
         "ok": True,
-        "message": "Sinkronisasi selesai",
+        "message": (
+            "Sinkronisasi selesai. "
+            "Ads hanya menampilkan produk "
+            "berstatus published."
+        ),
         "received": len(source_products),
         "created": created,
         "updated": updated,
+        "published_received": (
+            published_received
+        ),
+        "hidden_received": hidden_received,
+        "hidden_statuses": hidden_statuses,
+        "published_local": int(
+            published_local
+        ),
+        "total_local": int(synced_total),
+        "filter": ADS_VISIBLE_PRODUCT_STATUS,
     }
-
 
 @app.get("/api/products")
 def list_products(
@@ -824,10 +939,14 @@ def list_products(
     ),
     db: Session = Depends(get_db),
 ):
-    query = select(Product)
+    query = select(Product).where(
+        ads_visible_product_condition()
+    )
 
     if search:
-        keyword = f"%{search.strip()}%"
+        keyword = (
+            f"%{search.strip()}%"
+        )
 
         query = query.where(
             or_(
@@ -839,7 +958,8 @@ def list_products(
 
     if category:
         query = query.where(
-            Product.category_slug == category
+            Product.category_slug
+            == category
         )
 
     total_query = select(
@@ -852,39 +972,53 @@ def list_products(
 
     records = db.scalars(
         query
-        .order_by(Product.synced_at.desc())
+        .order_by(
+            Product.synced_at.desc()
+        )
         .offset(offset)
         .limit(limit)
     ).all()
 
     return {
         "ok": True,
-        "total": total,
+        "total": int(total),
         "limit": limit,
         "offset": offset,
+        "status_filter": (
+            ADS_VISIBLE_PRODUCT_STATUS
+        ),
         "products": [
             product_to_dict(product)
             for product in records
         ],
     }
 
-
 @app.get("/api/products/{product_id}")
 def get_product(
     product_id: int,
     db: Session = Depends(get_db),
 ):
-    product = db.get(Product, product_id)
+    product = db.scalar(
+        select(Product).where(
+            Product.id == product_id,
+            ads_visible_product_condition(),
+        )
+    )
 
     if product is None:
         raise HTTPException(
             status_code=404,
-            detail="Produk tidak ditemukan",
+            detail=(
+                "Produk tidak ditemukan atau "
+                "belum berstatus published"
+            ),
         )
 
     return {
         "ok": True,
-        "product": product_to_dict(product),
+        "product": product_to_dict(
+            product
+        ),
     }
 
 # PRODUCT_ADS_PHASE2_BEGIN

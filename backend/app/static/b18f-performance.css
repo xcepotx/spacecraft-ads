@@ -1,0 +1,27 @@
+/* B18F_FRONTEND_PERFORMANCE_CSS_START */
+
+/*
+ * Browser hanya melakukan layout/paint penuh pada card yang mendekati
+ * viewport. Ini mengurangi beban awal ketika puluhan produk ditampilkan.
+ */
+.product-card,
+.raw-video-card {
+    content-visibility: auto;
+    contain-intrinsic-size: 340px;
+}
+
+/*
+ * Hindari animasi/transisi berlebihan ketika pengguna memilih reduced motion.
+ */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+/* B18F_FRONTEND_PERFORMANCE_CSS_END */

@@ -1,3 +1,11 @@
+// B19D_SNAPSHOT_HASH_DRIFT_UI
+// B19C_LINKED_CREATIVE_SET_UI
+// B19B_CREATIVE_READINESS_FRONTEND
+// B19A2_SELECTABLE_DROPDOWN
+// B19A_LINKED_CATALOG_FRONTEND
+// B18K2_FORCE_RECONCILE_FRONTEND
+// B18K_PUBLISHED_PRODUCTS_FRONTEND
+// B18F_APP_POLLING_OPTIMIZED
 const state = {
     activeProductId: null,
     workspace: null,
@@ -5,8 +13,20 @@ const state = {
     rawVideosByProduct: {},
     rawVideoGenerateTimers: {},
     catalogProductOrder: [],
+    // B19A_CATALOG_STATE
+    b19aCatalogs: [],
+    b19aCatalogPreview: null,
+    b19aLinkedCatalog: null,
+    b19aCatalogSourceMode:
+        "spacecraft",
+    b19aPricingSource:
+        "meta",
+    // B19C_CREATIVE_SET_STATE
+    b19cCreativeSet: null,
     musicLibrary: [],
     expandedCampaignIds: new Set(),
+    campaignHistoryPage: 1,
+    campaignHistoryPageSize: 5,
 };
 
 const productGrid =
@@ -32,6 +52,92 @@ const multiProductSection =
 
 const multiProductPicker =
     document.getElementById("multiProductPicker");
+
+const singleProductSelect =
+    document.getElementById("singleProductSelect");
+
+const singleProductRawVideoSelect =
+    document.getElementById("singleProductRawVideoSelect");
+
+const singleProductGenerateButton =
+    document.getElementById(
+        "singleProductGenerateButton"
+    );
+
+const singleProductMessage =
+    document.getElementById("singleProductMessage");
+
+const singleProductVoiceoverEnabled =
+    document.getElementById("singleProductVoiceoverEnabled");
+
+const singleProductVoiceId =
+    document.getElementById("singleProductVoiceId");
+
+const singleProductVoiceMode =
+    document.getElementById("singleProductVoiceMode");
+
+const singleProductVoiceText =
+    document.getElementById("singleProductVoiceText");
+
+const singleProductVoiceTextWrap =
+    document.getElementById("singleProductVoiceTextWrap");
+
+// B19A_CATALOG_ELEMENTS
+const b19aCatalogSourceMode =
+    document.getElementById(
+        "b19aCatalogSourceMode"
+    );
+
+const b19aCatalogSelect =
+    document.getElementById(
+        "b19aCatalogSelect"
+    );
+
+const b19aCatalogStatus =
+    document.getElementById(
+        "b19aCatalogStatus"
+    );
+
+const b19aCatalogDetail =
+    document.getElementById(
+        "b19aCatalogDetail"
+    );
+
+const b19aLinkedCatalogControls =
+    document.getElementById(
+        "b19aLinkedCatalogControls"
+    );
+
+const b19aCatalogConnectionBadge =
+    document.getElementById(
+        "b19aCatalogConnectionBadge"
+    );
+
+const b19aApplyCatalogButton =
+    document.getElementById(
+        "b19aApplyCatalogButton"
+    );
+
+// B19C_CREATIVE_SET_ELEMENTS
+const b19cCreativeSetPanel =
+    document.getElementById(
+        "b19cCreativeSetPanel"
+    );
+
+const b19cCreativeSetCode =
+    document.getElementById(
+        "b19cCreativeSetCode"
+    );
+
+const b19cCreativeSetStatus =
+    document.getElementById(
+        "b19cCreativeSetStatus"
+    );
+
+const b19cCommerceStatus =
+    document.getElementById(
+        "b19cCommerceStatus"
+    );
 
 const generateMultiCampaignButton =
     document.getElementById("generateMultiCampaignButton");
@@ -221,6 +327,1439 @@ function productCard(product) {
 }
 
 
+
+
+
+
+// B19D_CATALOG_DRIFT_FRONTEND
+async function b19dRefreshCreativeSetDrift() {
+    const code =
+        state.b19cCreativeSet
+        ?.creative_set_code;
+
+    if (!code) {
+        return null;
+    }
+
+    try {
+        const data = await api(
+            `/api/creative-sets/`
+            + `${encodeURIComponent(code)}`
+            + `/drift?_ts=${Date.now()}`
+        );
+
+        state.b19cCreativeSet =
+            data.creative_set || null;
+
+        b19cRenderCreativeSet();
+        renderCatalogPreflight();
+
+        return state.b19cCreativeSet;
+
+    } catch (error) {
+        console.warn(
+            "B19D drift refresh failed",
+            error
+        );
+
+        return null;
+    }
+}
+
+
+function b19dDriftError() {
+    const item = state.b19cCreativeSet;
+
+    if (
+        item
+        && (
+            item.is_stale
+            || item.drift_status === "stale"
+        )
+    ) {
+        return (
+            item.drift_reason
+            || (
+                "Mini Catalog berubah. "
+                + "Apply Catalog ulang."
+            )
+        );
+    }
+
+    return "";
+}
+
+
+
+// B19C_LINKED_CREATIVE_SET_FRONTEND
+function b19cRenderCreativeSet() {
+    const item =
+        state.b19cCreativeSet;
+
+    if (!b19cCreativeSetPanel) {
+        return;
+    }
+
+    if (!item) {
+        b19cCreativeSetPanel.classList.add(
+            "is-empty"
+        );
+
+        if (b19cCreativeSetCode) {
+            b19cCreativeSetCode.textContent =
+                "Belum dibuat";
+        }
+
+        if (b19cCreativeSetStatus) {
+            b19cCreativeSetStatus.textContent =
+                "Draft";
+            b19cCreativeSetStatus.className =
+                "b19c-status is-neutral";
+        }
+
+        if (b19cCommerceStatus) {
+            b19cCommerceStatus.textContent =
+                "Commerce belum linked";
+            b19cCommerceStatus.className =
+                "b19c-status is-locked";
+        }
+
+        const driftWarning =
+            document.getElementById(
+                "b19dDriftWarning"
+            );
+
+        if (driftWarning) {
+            driftWarning.hidden = true;
+            driftWarning.textContent = "";
+        }
+
+        return;
+    }
+
+    b19cCreativeSetPanel.classList.remove(
+        "is-empty"
+    );
+
+    if (b19cCreativeSetCode) {
+        b19cCreativeSetCode.textContent =
+            item.creative_set_code;
+    }
+
+    if (b19cCreativeSetStatus) {
+        b19cCreativeSetStatus.textContent =
+            String(
+                item.status || "draft"
+            )
+            .replaceAll("_", " ");
+
+        b19cCreativeSetStatus.className =
+            "b19c-status "
+            + (
+                item.drift_status === "stale"
+                ? "is-stale"
+                : (
+                    item.status === "ready"
+                    ? "is-ready"
+                    : (
+                        item.status
+                            === "missing_assets"
+                        ? "is-warning"
+                        : "is-neutral"
+                    )
+                )
+            );
+    }
+
+    const driftWarning =
+        document.getElementById(
+            "b19dDriftWarning"
+        );
+
+    if (driftWarning) {
+        const stale = (
+            item.drift_status === "stale"
+            || item.is_stale
+        );
+
+        driftWarning.hidden = !stale;
+        driftWarning.textContent = stale
+            ? (
+                "Catalog Drift: "
+                + (
+                    item.drift_reason
+                    || (
+                        "Mini Catalog berubah. "
+                        + "Apply Catalog ulang."
+                    )
+                )
+            )
+            : "";
+    }
+
+    if (b19cCommerceStatus) {
+        b19cCommerceStatus.textContent =
+            item.commerce_ready
+            ? (
+                "Commerce Ready · "
+                + (
+                    item.catalog_code
+                    || ""
+                )
+            )
+            : "Internal Only";
+
+        b19cCommerceStatus.className =
+            "b19c-status "
+            + (
+                item.commerce_ready
+                ? "is-ready"
+                : "is-locked"
+            );
+    }
+}
+
+
+async function b19cPrepareFromCatalog(
+    catalog
+) {
+    if (!catalog) {
+        throw new Error(
+            "Mini Catalog belum dipilih"
+        );
+    }
+
+    const productIds = (
+        catalog.products || []
+    ).map(
+        item =>
+            Number(
+                item.local_product_id
+            )
+    ).filter(Boolean);
+
+    const data = await api(
+        "/api/creative-sets/prepare",
+        {
+            method: "POST",
+            // B19C_PREPARE_JSON_CONTENT_TYPE_FIX
+            headers: {
+                "Content-Type":
+                    "application/json",
+            },
+            body: JSON.stringify({
+                source_type: "spacecraft",
+                catalog_code:
+                    catalog.catalog_code,
+                catalog_hash:
+                    catalog.catalog_hash,
+                name: catalog.name,
+                product_ids: productIds,
+            }),
+        }
+    );
+
+    state.b19cCreativeSet =
+        data.creative_set || null;
+
+    b19cRenderCreativeSet();
+
+    return state.b19cCreativeSet;
+}
+
+
+async function b19cPrepareCustom(
+    productIds
+) {
+    const data = await api(
+        "/api/creative-sets/prepare",
+        {
+            method: "POST",
+            headers: {
+                "Content-Type":
+                    "application/json",
+            },
+            body: JSON.stringify({
+                source_type: "custom",
+                name: (
+                    document.getElementById(
+                        "multiCampaignName"
+                    )?.value?.trim()
+                    || "Custom Creative Set"
+                ),
+                product_ids: productIds,
+            }),
+        }
+    );
+
+    state.b19cCreativeSet =
+        data.creative_set || null;
+
+    b19cRenderCreativeSet();
+
+    return state.b19cCreativeSet;
+}
+
+
+function b19cPreflightError() {
+    const item =
+        state.b19cCreativeSet;
+
+    if (!item) {
+        return (
+            "Creative Set belum dibuat. "
+            + "Apply Catalog ulang."
+        );
+    }
+
+    if (
+        state.b19aCatalogSourceMode
+        === "spacecraft"
+    ) {
+        if (
+            item.source_type
+            !== "spacecraft"
+            || !item.catalog_code
+            || !item.commerce_ready
+        ) {
+            return (
+                "Linked Creative Set belum "
+                + "commerce-ready."
+            );
+        }
+    }
+
+    return "";
+}
+
+
+
+// B19B_CREATIVE_READINESS_MATRIX
+function b19bReadinessLabel(
+    readiness
+) {
+    if (!readiness) {
+        return "Readiness belum diperiksa";
+    }
+
+    if (readiness.ready_to_render) {
+        return (
+            `${readiness.products_ready}/`
+            + `${readiness.products_total} siap`
+        );
+    }
+
+    return (
+        `${readiness.products_ready}/`
+        + `${readiness.products_total} siap · `
+        + `${readiness.products_missing} belum`
+    );
+}
+
+
+function b19bReadinessClass(
+    readiness
+) {
+    if (!readiness) {
+        return "is-neutral";
+    }
+
+    if (readiness.ready_to_render) {
+        return "is-ready";
+    }
+
+    if (
+        Number(
+            readiness.products_ready
+            || 0
+        ) > 0
+    ) {
+        return "is-warning";
+    }
+
+    return "is-missing";
+}
+
+
+async function b19bLoadReadiness(
+    catalogCode
+) {
+    const data = await api(
+        `/api/spacecraft/catalogs/`
+        + `${encodeURIComponent(
+            catalogCode
+        )}/readiness`
+        + `?_ts=${Date.now()}`
+    );
+
+    return data.readiness || null;
+}
+
+
+async function b19bUploadCatalogRaw(
+    productId,
+    input
+) {
+    const files = [
+        ...(input?.files || [])
+    ];
+
+    if (!files.length) {
+        return;
+    }
+
+    const invalid = files.find(file =>
+        !(
+            file.type === "video/mp4"
+            || file.type === "video/webm"
+            || file.type === "video/quicktime"
+            || /\.(mp4|mov|webm)$/i.test(
+                file.name
+            )
+        )
+    );
+
+    if (invalid) {
+        b19aSetStatus(
+            `File tidak didukung: `
+            + invalid.name,
+            "error"
+        );
+
+        input.value = "";
+        return;
+    }
+
+    const formData = new FormData();
+
+    files.forEach(file => {
+        formData.append(
+            "files",
+            file
+        );
+    });
+
+    input.disabled = true;
+
+    b19aSetStatus(
+        `Mengunggah ${files.length} `
+        + "raw video..."
+    );
+
+    try {
+        const data = await api(
+            `/api/products/${productId}/assets`,
+            {
+                method: "POST",
+                body: formData,
+            }
+        );
+
+        delete state.rawVideosByProduct[
+            Number(productId)
+        ];
+
+        b19aSetStatus(
+            data.message
+            || "Raw video berhasil diunggah.",
+            "success"
+        );
+
+        const checkbox =
+            document.querySelector(
+                ".campaignProductCheckbox"
+                + `[value="${productId}"]`
+            );
+
+        if (
+            checkbox
+            && checkbox.checked
+        ) {
+            await toggleCampaignProductRaw(
+                checkbox
+            );
+        }
+
+        await b19aPreviewSelectedCatalog();
+
+        if (
+            state.b19aLinkedCatalog
+            ?.catalog_code
+            === b19aCatalogSelect?.value
+        ) {
+            const refreshed =
+                state.b19aCatalogPreview;
+
+            if (refreshed) {
+                state.b19aLinkedCatalog =
+                    refreshed;
+            }
+        }
+
+        renderCatalogPreflight();
+
+    } catch (error) {
+        b19aSetStatus(
+            `Upload raw video gagal: `
+            + error.message,
+            "error"
+        );
+
+    } finally {
+        input.disabled = false;
+        input.value = "";
+    }
+}
+
+
+
+// B19A_CATALOG_SELECTOR_LOGIC
+function b19aSetStatus(
+    message,
+    kind = ""
+) {
+    if (b19aCatalogStatus) {
+        b19aCatalogStatus.textContent =
+            message;
+
+        b19aCatalogStatus.classList.toggle(
+            "is-error",
+            kind === "error"
+        );
+
+        b19aCatalogStatus.classList.toggle(
+            "is-success",
+            kind === "success"
+        );
+    }
+}
+
+
+function b19aCatalogByCode(
+    catalogCode
+) {
+    return (
+        state.b19aCatalogs
+        || []
+    ).find(
+        item =>
+            item.catalog_code
+            === catalogCode
+    ) || null;
+}
+
+
+function b19aRenderCatalogOptions() {
+    if (!b19aCatalogSelect) return;
+
+    const catalogs =
+        state.b19aCatalogs || [];
+
+    if (!catalogs.length) {
+        b19aCatalogSelect.innerHTML = `
+            <option value="">
+                Tidak ada catalog published
+            </option>
+        `;
+        return;
+    }
+
+    b19aCatalogSelect.innerHTML =
+        catalogs.map(catalog => {
+            const compatible =
+                Boolean(
+                    catalog.render_compatible
+                );
+
+            const readiness =
+                `${Number(
+                    catalog.raw_video_ready_count
+                    || 0
+                )}/${Number(
+                    catalog.products_count
+                    || 0
+                )} raw`;
+
+            const suffix = compatible
+                ? readiness
+                : (
+                    "Preview only · "
+                    + (
+                        catalog.compatibility_reasons?.[0]
+                        || "Belum kompatibel"
+                    )
+                );
+
+            return `
+                <option
+                    value="${escapeHtml(
+                        catalog.catalog_code
+                    )}"
+                    data-compatible="${
+                        compatible
+                        ? "true"
+                        : "false"
+                    }"
+                >
+                    ${escapeHtml(
+                        catalog.catalog_code
+                    )}
+                    — ${escapeHtml(
+                        catalog.name
+                    )}
+                    (${escapeHtml(suffix)})
+                </option>
+            `;
+        }).join("");
+
+    const linkedCode =
+        state.b19aLinkedCatalog
+        ?.catalog_code;
+
+    const defaultCode = (
+        (
+            linkedCode
+            && b19aCatalogByCode(
+                linkedCode
+            )
+        )
+        ? linkedCode
+        : (
+            catalogs[0]
+            ?.catalog_code
+            || ""
+        )
+    );
+
+    b19aCatalogSelect.value =
+        defaultCode;
+}
+
+
+function b19aRenderCatalogDetail(
+    catalog
+) {
+    state.b19aCatalogPreview =
+        catalog || null;
+
+    if (!b19aCatalogDetail) return;
+
+    if (!catalog) {
+        b19aCatalogDetail.innerHTML = `
+            <div class="empty compact">
+                Pilih Mini Catalog untuk
+                melihat anggotanya.
+            </div>
+        `;
+        return;
+    }
+
+    const products =
+        catalog.products || [];
+
+    const compatible =
+        Boolean(
+            catalog.render_compatible
+        );
+
+    const activeCode =
+        state.b19aLinkedCatalog
+        ?.catalog_code;
+
+    const isApplied = (
+        activeCode
+        === catalog.catalog_code
+        && state.b19aLinkedCatalog
+            ?.catalog_hash
+            === catalog.catalog_hash
+    );
+
+    const reasons = (
+        catalog.compatibility_reasons
+        || []
+    );
+
+    b19aCatalogDetail.innerHTML = `
+        <div class="b19a-catalog-summary">
+            <div>
+                <strong>
+                    ${escapeHtml(
+                        catalog.catalog_code
+                    )}
+                    — ${escapeHtml(
+                        catalog.name
+                    )}
+                </strong>
+                <span>
+                    ${escapeHtml(
+                        catalog.catalog_type
+                        || "catalog"
+                    )}
+                    · ${escapeHtml(
+                        catalog.flow_type
+                        || "flow"
+                    )}
+                    · ${Number(
+                        catalog.products_count
+                        || 0
+                    )} produk
+                </span>
+            </div>
+
+            <div class="b19a-summary-badges">
+                <span class="${
+                    compatible
+                    ? "is-ready"
+                    : "is-blocked"
+                }">
+                    ${
+                        compatible
+                        ? "Compatible"
+                        : "Blocked"
+                    }
+                </span>
+
+                <span class="${
+                    isApplied
+                    ? "is-applied"
+                    : ""
+                }">
+                    ${
+                        isApplied
+                        ? "Applied"
+                        : "Not Applied"
+                    }
+                </span>
+            </div>
+        </div>
+
+        ${
+            reasons.length
+            ? `
+                <div class="b19a-catalog-warning">
+                    ${escapeHtml(
+                        reasons.join(" · ")
+                    )}
+                </div>
+            `
+            : ""
+        }
+
+        ${
+            catalog.readiness
+            ? `
+                <div class="b19b-readiness-card">
+                    <div class="b19b-readiness-head">
+                        <div>
+                            <span>
+                                Creative Readiness
+                            </span>
+                            <strong>
+                                ${escapeHtml(
+                                    b19bReadinessLabel(
+                                        catalog.readiness
+                                    )
+                                )}
+                            </strong>
+                        </div>
+
+                        <span class="b19b-readiness-status ${
+                            b19bReadinessClass(
+                                catalog.readiness
+                            )
+                        }">
+                            ${
+                                catalog.readiness
+                                    .ready_to_render
+                                ? "Ready to Render"
+                                : "Missing Assets"
+                            }
+                        </span>
+                    </div>
+
+                    <div class="b19b-progress">
+                        <span
+                            style="width: ${
+                                Number(
+                                    catalog.readiness
+                                        .ready_percentage
+                                    || 0
+                                )
+                            }%"
+                        ></span>
+                    </div>
+
+                    <div class="b19b-readiness-meta">
+                        <span>
+                            ${Number(
+                                catalog.readiness
+                                    .products_ready
+                                || 0
+                            )}
+                            produk memiliki raw video
+                        </span>
+                        <span>
+                            ${Number(
+                                catalog.readiness
+                                    .products_with_primary
+                                || 0
+                            )}
+                            produk memiliki primary raw
+                        </span>
+                    </div>
+                </div>
+            `
+            : ""
+        }
+
+        <div class="b19a-product-list">
+            ${products.map(product => {
+                const readinessItem = (
+                    catalog.readiness?.products
+                    || []
+                ).find(
+                    item =>
+                        Number(
+                            item.local_product_id
+                        )
+                        === Number(
+                            product.local_product_id
+                        )
+                );
+
+                return `
+                <div class="b19a-product-row">
+                    <span class="b19a-product-order">
+                        ${Number(
+                            product.commerce_position
+                        )}
+                    </span>
+
+                    <div>
+                        <strong>
+                            ${escapeHtml(
+                                product.name
+                            )}
+                        </strong>
+                        <small>
+                            External:
+                            ${escapeHtml(
+                                product.external_product_id
+                            )}
+                            · Local:
+                            ${
+                                product.local_product_id
+                                ? Number(
+                                    product.local_product_id
+                                )
+                                : "belum mapped"
+                            }
+                        </small>
+                    </div>
+
+                    <div class="b19b-product-actions">
+                        <span class="${
+                            readinessItem?.creative_ready
+                            ? "is-ready"
+                            : "is-missing"
+                        }">
+                            ${
+                                readinessItem?.creative_ready
+                                ? `${Number(
+                                    readinessItem
+                                        .raw_video_count
+                                    || 0
+                                )} raw video`
+                                : "Raw belum ada"
+                            }
+                        </span>
+
+                        ${
+                            product.local_product_id
+                            ? `
+                                <label
+                                    class="b19b-upload-button"
+                                >
+                                    ${
+                                        readinessItem
+                                            ?.creative_ready
+                                        ? "Tambah Raw"
+                                        : "Upload Raw"
+                                    }
+
+                                    <input
+                                        type="file"
+                                        accept=".mp4,.mov,.webm,video/mp4,video/webm,video/quicktime"
+                                        multiple
+                                        onchange="b19bUploadCatalogRaw(
+                                            ${Number(
+                                                product
+                                                    .local_product_id
+                                            )},
+                                            this
+                                        )"
+                                    />
+                                </label>
+                            `
+                            : `
+                                <span class="b19b-unmapped">
+                                    Belum mapped
+                                </span>
+                            `
+                        }
+                    </div>
+                </div>
+                `;
+            }).join("")}
+        </div>
+
+        <div class="b19a-catalog-footer">
+            <span>
+                Commerce order mengikuti
+                SpaceCraft.
+            </span>
+            <span>
+                Creative order boleh diubah
+                setelah Apply.
+            </span>
+            ${
+                catalog.go_url
+                ? `
+                    <a
+                        href="${escapeHtml(
+                            catalog.go_url
+                        )}"
+                        target="_blank"
+                        rel="noopener"
+                    >
+                        Buka /go/${escapeHtml(
+                            catalog.catalog_code
+                        )}
+                    </a>
+                `
+                : ""
+            }
+        </div>
+    `;
+
+    if (b19aApplyCatalogButton) {
+        b19aApplyCatalogButton.disabled =
+            !compatible;
+    }
+}
+
+
+async function loadB19aCatalogs(
+    preview = true
+) {
+    if (
+        !b19aCatalogSelect
+        || !b19aCatalogStatus
+    ) {
+        return;
+    }
+
+    b19aSetStatus(
+        "Memuat cache Mini Catalog..."
+    );
+
+    try {
+        const data = await api(
+            "/api/spacecraft/catalogs"
+            + `?_ts=${Date.now()}`
+        );
+
+        state.b19aCatalogs =
+            data.catalogs || [];
+
+        b19aRenderCatalogOptions();
+
+        if (b19aCatalogConnectionBadge) {
+            b19aCatalogConnectionBadge
+                .textContent =
+                    `${Number(
+                        data.count || 0
+                    )} catalog`;
+
+            b19aCatalogConnectionBadge
+                .classList.add(
+                    "is-connected"
+                );
+        }
+
+        b19aSetStatus(
+            `${Number(
+                data.count || 0
+            )} Mini Catalog published `
+            + "tersedia dari cache.",
+            "success"
+        );
+
+        if (
+            preview
+            && b19aCatalogSelect.value
+        ) {
+            await b19aPreviewSelectedCatalog();
+        }
+
+    } catch (error) {
+        state.b19aCatalogs = [];
+
+        b19aRenderCatalogOptions();
+
+        b19aSetStatus(
+            `Gagal memuat catalog: `
+            + error.message,
+            "error"
+        );
+
+        if (b19aCatalogConnectionBadge) {
+            b19aCatalogConnectionBadge
+                .textContent = "Offline";
+        }
+    }
+}
+
+
+async function syncB19aCatalogs() {
+    b19aSetStatus(
+        "Menyinkronkan Mini Catalog "
+        + "dari SpaceCraft..."
+    );
+
+    try {
+        const data = await api(
+            "/api/spacecraft/catalogs/sync",
+            {
+                method: "POST",
+            }
+        );
+
+        const staleCount = Number(
+            data.drift?.stale_count
+            || 0
+        );
+
+        b19aSetStatus(
+            `${Number(
+                data.count || 0
+            )} Mini Catalog berhasil `
+            + "disinkronkan."
+            + (
+                staleCount
+                ? (
+                    ` ${staleCount} Creative Set `
+                    + "ditandai stale."
+                )
+                : ""
+            ),
+            staleCount
+                ? "warning"
+                : "success"
+        );
+
+        if (state.b19cCreativeSet) {
+            await b19dRefreshCreativeSetDrift();
+        }
+
+        state.b19aLinkedCatalog = null;
+
+        await loadB19aCatalogs(true);
+
+        renderCatalogPreflight();
+
+    } catch (error) {
+        b19aSetStatus(
+            `Sinkronisasi gagal: `
+            + error.message,
+            "error"
+        );
+    }
+}
+
+
+async function b19aPreviewSelectedCatalog() {
+    const code = (
+        b19aCatalogSelect?.value
+        || ""
+    ).trim();
+
+    if (!code) {
+        b19aRenderCatalogDetail(null);
+        return null;
+    }
+
+    b19aSetStatus(
+        `Memuat detail ${code}...`
+    );
+
+    try {
+        const data = await api(
+            `/api/spacecraft/catalogs/`
+            + `${encodeURIComponent(code)}`
+            + `?_ts=${Date.now()}`
+        );
+
+        const catalog =
+            data.catalog || null;
+
+        if (catalog) {
+            try {
+                catalog.readiness =
+                    await b19bLoadReadiness(
+                        catalog.catalog_code
+                    );
+            } catch (readinessError) {
+                catalog.readiness = null;
+
+                console.warn(
+                    "B19B readiness load failed",
+                    readinessError
+                );
+            }
+        }
+
+        b19aRenderCatalogDetail(
+            catalog
+        );
+
+        b19aSetStatus(
+            `${code} siap direview.`,
+            "success"
+        );
+
+        return catalog;
+
+    } catch (error) {
+        b19aRenderCatalogDetail(null);
+
+        b19aSetStatus(
+            `Gagal memuat ${code}: `
+            + error.message,
+            "error"
+        );
+
+        return null;
+    }
+}
+
+
+function b19aResetProductSelection() {
+    document.querySelectorAll(
+        ".campaignProductCheckbox"
+    ).forEach(input => {
+        input.checked = false;
+
+        const productId = Number(
+            input.value
+        );
+
+        const select = document.querySelector(
+            ".campaignRawVideoSelect"
+            + `[data-product-id="${productId}"]`
+        );
+
+        if (select) {
+            select.disabled = true;
+            select.innerHTML = (
+                '<option value="">'
+                + "Centang untuk memuat raw video"
+                + "</option>"
+            );
+        }
+
+        setRawVideoGenerateState(
+            productId,
+            "Pilih produk untuk memuat "
+            + "raw video"
+        );
+    });
+
+    state.catalogProductOrder = [];
+
+    updateCatalogOrderUI();
+    renderCatalogPreflight();
+}
+
+
+async function b19aApplyCatalogObject(
+    catalog,
+    showMessage = true
+) {
+    if (
+        !catalog
+        || !catalog.render_compatible
+    ) {
+        if (showMessage) {
+            b19aSetStatus(
+                "Catalog belum kompatibel "
+                + "untuk render.",
+                "error"
+            );
+        }
+        return false;
+    }
+
+    const productIds = (
+        catalog.products || []
+    ).map(
+        item =>
+            Number(
+                item.local_product_id
+            )
+    ).filter(Boolean);
+
+    if (
+        productIds.length
+        !== Number(
+            catalog.products_count
+        )
+    ) {
+        b19aSetStatus(
+            "Ada anggota catalog yang "
+            + "belum terpetakan ke Ads.",
+            "error"
+        );
+        return false;
+    }
+
+    const missingInPicker =
+        productIds.filter(
+            productId =>
+                !document.querySelector(
+                    ".campaignProductCheckbox"
+                    + `[value="${productId}"]`
+                )
+        );
+
+    if (missingInPicker.length) {
+        b19aSetStatus(
+            "Produk catalog belum tersedia "
+            + "di picker Ads. Sinkronkan "
+            + "produk SpaceCraft dahulu.",
+            "error"
+        );
+        return false;
+    }
+
+    b19aResetProductSelection();
+
+    state.b19aLinkedCatalog =
+        catalog;
+
+    state.b19aCatalogSourceMode =
+        "spacecraft";
+
+    // B19C_PREPARE_ON_APPLY
+    await b19cPrepareFromCatalog(
+        catalog
+    );
+
+    if (b19aCatalogSourceMode) {
+        b19aCatalogSourceMode.value =
+            "spacecraft";
+    }
+
+    state.catalogProductOrder =
+        [...productIds];
+
+    for (const productId of productIds) {
+        const input = document.querySelector(
+            ".campaignProductCheckbox"
+            + `[value="${productId}"]`
+        );
+
+        input.checked = true;
+
+        await toggleCampaignProductRaw(
+            input
+        );
+    }
+
+    const nameInput =
+        document.getElementById(
+            "multiCampaignName"
+        );
+
+    if (
+        nameInput
+        && !nameInput.value.trim()
+    ) {
+        nameInput.value = (
+            `${catalog.catalog_code} — `
+            + `${catalog.name}`
+        );
+    }
+
+    b19aRenderCatalogDetail(
+        catalog
+    );
+
+    renderCatalogPreflight();
+
+    if (showMessage) {
+        b19aSetStatus(
+            `${catalog.catalog_code} `
+            + "berhasil diterapkan. "
+            + "Lengkapi raw video sebelum "
+            + "render.",
+            "success"
+        );
+    }
+
+    return true;
+}
+
+
+async function b19aApplySelectedCatalog() {
+    let catalog =
+        state.b19aCatalogPreview;
+
+    const selectedCode = (
+        b19aCatalogSelect?.value
+        || ""
+    ).trim();
+
+    if (
+        !catalog
+        || catalog.catalog_code
+            !== selectedCode
+    ) {
+        catalog = (
+            await b19aPreviewSelectedCatalog()
+        );
+    }
+
+    await b19aApplyCatalogObject(
+        catalog,
+        true
+    );
+}
+
+
+function b19aSetCatalogSourceMode() {
+    const mode = (
+        b19aCatalogSourceMode?.value
+        || "custom"
+    );
+
+    state.b19aCatalogSourceMode =
+        mode;
+
+    b19aLinkedCatalogControls
+        ?.classList.toggle(
+            "is-hidden",
+            mode !== "spacecraft"
+        );
+
+    if (mode === "custom") {
+        state.b19aLinkedCatalog = null;
+        state.b19cCreativeSet = null;
+        b19cRenderCreativeSet();
+
+        b19aSetStatus(
+            "Mode Custom Creative Set aktif. "
+            + "Creative ini belum terhubung "
+            + "ke Mini Catalog commerce."
+        );
+
+        b19aRenderCatalogDetail(null);
+
+    } else {
+        b19aSetStatus(
+            "Pilih dan Apply Mini Catalog "
+            + "SpaceCraft."
+        );
+
+        if (b19aCatalogSelect?.value) {
+            b19aPreviewSelectedCatalog();
+        }
+    }
+
+    renderCatalogPreflight();
+}
+
+
+function b19aSetPricingSource() {
+    state.b19aPricingSource = (
+        document.getElementById(
+            "b19aPricingSource"
+        )?.value
+        || "meta"
+    );
+
+    renderCatalogPreflight();
+}
+
+
+function b19aCatalogSelectionError(
+    productIds
+) {
+    if (
+        state.b19aCatalogSourceMode
+        !== "spacecraft"
+    ) {
+        return "";
+    }
+
+    const catalog =
+        state.b19aLinkedCatalog;
+
+    if (!catalog) {
+        return (
+            "Pilih dan Apply Mini Catalog "
+            + "SpaceCraft."
+        );
+    }
+
+    const readiness =
+        catalog.readiness;
+
+    if (
+        readiness
+        && !readiness.ready_to_render
+    ) {
+        return (
+            "Creative Readiness belum "
+            + "lengkap: "
+            + `${readiness.products_ready}/`
+            + `${readiness.products_total} `
+            + "produk memiliki raw video."
+        );
+    }
+
+    const expected = (
+        catalog.products || []
+    ).map(
+        item =>
+            Number(
+                item.local_product_id
+            )
+    ).filter(Boolean);
+
+    if (
+        expected.length
+        !== productIds.length
+        || expected.some(
+            item =>
+                !productIds.includes(
+                    item
+                )
+        )
+    ) {
+        return (
+            "Anggota Creative Set harus "
+            + "sama dengan anggota "
+            + catalog.catalog_code
+            + ". Apply Catalog ulang."
+        );
+    }
+
+    return "";
+}
+
+
+
 function renderMultiProductPicker() {
     if (!multiProductPicker) return;
 
@@ -285,7 +1824,13 @@ function renderMultiProductPicker() {
                             <select
                                 class="campaignRawVideoSelect"
                                 data-product-id="${Number(product.id)}"
-                                onchange="renderCatalogPreflight()"
+                                onclick="event.stopPropagation()"
+                                onmousedown="event.stopPropagation()"
+                                onchange="
+                                    event.stopPropagation();
+                                    updateRawVideoSelectionStatus(${Number(product.id)});
+                                    renderCatalogPreflight();
+                                "
                                 disabled
                             >
                                 <option value="">Centang untuk memuat raw video</option>
@@ -338,6 +1883,334 @@ function renderMultiProductPicker() {
             }).join("")}
         </div>
     `;
+}
+
+
+function renderSingleProductControls() {
+    if (!singleProductSelect) return;
+
+    const products = [...(state.products || [])]
+        .sort((a, b) =>
+            String(a.name || "").localeCompare(String(b.name || ""))
+        );
+
+    const currentValue = singleProductSelect.value;
+
+    singleProductSelect.innerHTML = `
+        <option value="">Pilih produk single campaign</option>
+        ${products.map(product => `
+            <option value="${Number(product.id)}">
+                ${escapeHtml(product.name)}
+                ${product.price_label ? ` - ${escapeHtml(product.price_label)}` : ""}
+            </option>
+        `).join("")}
+    `;
+
+    if (
+        currentValue
+        && products.some(
+            product => String(product.id) === String(currentValue)
+        )
+    ) {
+        singleProductSelect.value = currentValue;
+    }
+}
+
+
+async function loadSingleProductRawVideos(productId) {
+    if (!singleProductRawVideoSelect) return;
+
+    singleProductRawVideoSelect.innerHTML = `
+        <option value="">Memuat raw video...</option>
+    `;
+    singleProductRawVideoSelect.disabled = true;
+
+    if (!productId) {
+        singleProductRawVideoSelect.innerHTML = `
+            <option value="">Pilih produk dulu</option>
+        `;
+        return;
+    }
+
+    try {
+        const data = await api(
+            `/api/products/${productId}/raw-videos`
+        );
+
+        const rawVideos = Array.isArray(data.raw_videos)
+            ? data.raw_videos
+            : [];
+
+        if (!rawVideos.length) {
+            singleProductRawVideoSelect.innerHTML = `
+                <option value="">Belum ada raw video</option>
+            `;
+            return;
+        }
+
+        singleProductRawVideoSelect.innerHTML = rawVideos.map(video => `
+            <option value="${escapeHtml(video.clip_id)}">
+                ${video.is_primary ? "Utama - " : ""}
+                ${escapeHtml(video.label || video.title || video.clip_id)}
+            </option>
+        `).join("");
+        singleProductRawVideoSelect.disabled = false;
+    } catch (error) {
+        singleProductRawVideoSelect.innerHTML = `
+            <option value="">Gagal memuat raw video</option>
+        `;
+        if (singleProductMessage) {
+            singleProductMessage.textContent =
+                `Raw video gagal dimuat: ${error.message}`;
+        }
+    }
+}
+
+
+function toggleSingleProductVoiceControls() {
+    const enabled =
+        Boolean(singleProductVoiceoverEnabled?.checked)
+        && voiceoverConfigured;
+
+    if (singleProductVoiceId) {
+        singleProductVoiceId.disabled = !enabled;
+    }
+
+    if (singleProductVoiceMode) {
+        singleProductVoiceMode.disabled = !enabled;
+    }
+
+    if (singleProductVoiceTextWrap) {
+        const showCustom =
+            enabled
+            && singleProductVoiceMode?.value === "custom";
+
+        singleProductVoiceTextWrap.style.display =
+            showCustom ? "block" : "none";
+    }
+
+    if (singleProductVoiceText) {
+        singleProductVoiceText.disabled =
+            !enabled
+            || singleProductVoiceMode?.value !== "custom";
+    }
+}
+
+
+async function loadSingleProductVoiceOptions() {
+    if (
+        !singleProductVoiceoverEnabled
+        || !singleProductVoiceId
+    ) {
+        return;
+    }
+
+    try {
+        const status = await api(
+            "/api/voiceover/status"
+        );
+
+        voiceoverConfigured =
+            Boolean(status.configured);
+
+        if (!voiceoverConfigured) {
+            singleProductVoiceoverEnabled.checked = false;
+            singleProductVoiceoverEnabled.disabled = true;
+            singleProductVoiceId.innerHTML = `
+                <option value="">
+                    ElevenLabs belum aktif
+                </option>
+            `;
+            toggleSingleProductVoiceControls();
+            return;
+        }
+
+        const data = await api(
+            "/api/voiceover/voices"
+        );
+
+        const voices = data.voices || [];
+        const savedVoice =
+            localStorage.getItem(
+                "productAdsSingleVoiceId"
+            )
+            || localStorage.getItem(
+                "productAdsElevenLabsVoiceId"
+            );
+
+        singleProductVoiceId.innerHTML = `
+            <option value="">
+                Pilih voice...
+            </option>
+            ${voices.map(voice => {
+                const labels = voice.labels || {};
+                const detail = [
+                    labels.gender,
+                    labels.age,
+                    labels.accent,
+                    voice.category,
+                ]
+                    .filter(Boolean)
+                    .join(" • ");
+
+                return `
+                    <option value="${escapeHtml(voice.voice_id)}">
+                        ${escapeHtml(voice.name)}
+                        ${detail ? ` — ${escapeHtml(detail)}` : ""}
+                    </option>
+                `;
+            }).join("")}
+        `;
+
+        if (
+            savedVoice
+            && voices.some(
+                voice => voice.voice_id === savedVoice
+            )
+        ) {
+            singleProductVoiceId.value = savedVoice;
+        } else if (voices.length) {
+            singleProductVoiceId.value = voices[0].voice_id;
+        }
+
+        singleProductVoiceoverEnabled.disabled = false;
+        toggleSingleProductVoiceControls();
+
+    } catch (error) {
+        voiceoverConfigured = false;
+        singleProductVoiceoverEnabled.checked = false;
+        singleProductVoiceoverEnabled.disabled = true;
+        singleProductVoiceId.innerHTML = `
+            <option value="">
+                Gagal memuat voice
+            </option>
+        `;
+        toggleSingleProductVoiceControls();
+    }
+}
+
+
+async function generateSingleProductCampaign() {
+    if (!singleProductSelect) return;
+
+    const productId = Number(singleProductSelect.value || 0);
+
+    if (!productId) {
+        if (singleProductMessage) {
+            singleProductMessage.textContent =
+                "Pilih produk dulu.";
+        }
+        return;
+    }
+
+    const rawClipId =
+        singleProductRawVideoSelect?.value || null;
+
+    if (!rawClipId) {
+        if (singleProductMessage) {
+            singleProductMessage.textContent =
+                "Produk ini belum punya raw video yang dipilih.";
+        }
+        return;
+    }
+
+    const singleVoiceEnabled =
+        Boolean(singleProductVoiceoverEnabled?.checked)
+        && voiceoverConfigured;
+
+    const singleVoiceId =
+        singleProductVoiceId?.value || "";
+
+    if (singleVoiceEnabled && !singleVoiceId) {
+        if (singleProductMessage) {
+            singleProductMessage.textContent =
+                "Pilih voice ElevenLabs dulu.";
+        }
+        return;
+    }
+
+    if (singleVoiceId) {
+        localStorage.setItem(
+            "productAdsSingleVoiceId",
+            singleVoiceId
+        );
+    }
+
+    if (singleProductGenerateButton) {
+        singleProductGenerateButton.disabled = true;
+        singleProductGenerateButton.textContent =
+            "Mengirim render...";
+    }
+
+    if (singleProductMessage) {
+        singleProductMessage.textContent =
+            "Membuat single product campaign...";
+    }
+
+    try {
+        const selectedProduct = (state.products || []).find(
+            product => Number(product.id) === productId
+        );
+
+        const payload = {
+            product_id: productId,
+            raw_clip_id: rawClipId,
+            name: selectedProduct
+                ? `${selectedProduct.name} Single Product Video`
+                : null,
+            duration_seconds: Number(
+                document.getElementById(
+                    "singleProductDuration"
+                )?.value || 20
+            ),
+            aspect_ratio: "9:16",
+            hook:
+                document.getElementById(
+                    "singleProductHook"
+                )?.value.trim() || null,
+            cta:
+                document.getElementById(
+                    "singleProductCta"
+                )?.value.trim() || null,
+            image_count: 4,
+            voiceover_enabled: singleVoiceEnabled,
+            voice_id: singleVoiceEnabled
+                ? singleVoiceId
+                : null,
+            voiceover_mode:
+                singleProductVoiceMode?.value || "auto",
+            voiceover_text:
+                singleProductVoiceText?.value.trim() || null,
+        };
+
+        const data = await api(
+            "/api/campaigns/single-product-video",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(payload),
+            }
+        );
+
+        if (singleProductMessage) {
+            singleProductMessage.textContent = data.message;
+        }
+
+        await loadMultiProductCampaigns();
+    } catch (error) {
+        if (singleProductMessage) {
+            singleProductMessage.textContent =
+                `Generate gagal: ${error.message}`;
+        }
+    } finally {
+        if (singleProductGenerateButton) {
+            singleProductGenerateButton.disabled = false;
+            singleProductGenerateButton.textContent =
+                "Render Single Product Video";
+        }
+    }
 }
 
 
@@ -448,10 +2321,7 @@ async function populateRawVideoSelect(productId, preferredClipId = "") {
         } else if (rawVideos.length) {
             select.value = rawVideos[0].clip_id;
         }
-        setRawVideoGenerateState(
-            productId,
-            `${rawVideos.length} video real tersedia`
-        );
+        updateRawVideoSelectionStatus(productId);
     } catch (error) {
         select.innerHTML = `
             <option value="">
@@ -463,6 +2333,28 @@ async function populateRawVideoSelect(productId, preferredClipId = "") {
             `Gagal memuat raw video: ${error.message}`
         );
     }
+}
+
+
+function updateRawVideoSelectionStatus(productId) {
+    const video = selectedRawVideoForProduct(productId);
+    const videos = state.rawVideosByProduct[Number(productId)] || [];
+
+    if (!video) {
+        setRawVideoGenerateState(
+            productId,
+            videos.length
+                ? `${videos.length} video tersedia, pilih salah satu`
+                : "Belum ada raw video real"
+        );
+        return;
+    }
+
+    const label = rawVideoLabel(video);
+    setRawVideoGenerateState(
+        productId,
+        `Dipakai: ${label}`
+    );
 }
 
 
@@ -729,6 +2621,38 @@ function calculateCatalogPreflight() {
     ) {
         errors.push(
             "Pilih tepat 5 sampai 6 produk."
+        );
+    }
+
+    // B19A_LINKED_PREFLIGHT
+    const b19aError =
+        b19aCatalogSelectionError(
+            productIds
+        );
+
+    if (b19aError) {
+        errors.push(
+            b19aError
+        );
+    }
+
+    // B19C_PREFLIGHT_GUARD
+    const b19cError =
+        b19cPreflightError();
+
+    if (b19cError) {
+        errors.push(
+            b19cError
+        );
+    }
+
+    // B19D_PREFLIGHT_DRIFT_GUARD
+    const b19dError =
+        b19dDriftError();
+
+    if (b19dError) {
+        errors.push(
+            b19dError
         );
     }
 
@@ -1194,47 +3118,74 @@ async function loadHealth() {
 
 async function loadProducts() {
     globalStatus.textContent =
-        "Memuat produk...";
+        "Memuat produk published...";
 
     const params = new URLSearchParams({
         limit: "100",
+        _ts: String(Date.now()),
     });
 
     const keyword =
         searchInput.value.trim();
 
     if (keyword) {
-        params.set("search", keyword);
+        params.set(
+            "search",
+            keyword
+        );
     }
 
     try {
         const data = await api(
             `/api/products?${params}`
         );
-        state.products = data.products || [];
-        renderMultiProductPicker();
 
-        if (!data.products.length) {
+        const publishedProducts = (
+            Array.isArray(data.products)
+                ? data.products
+                : []
+        ).filter(
+            product =>
+                String(
+                    product?.status || ""
+                )
+                .trim()
+                .toLowerCase()
+                === "published"
+        );
+
+        state.products =
+            publishedProducts;
+
+        renderMultiProductPicker();
+        renderSingleProductControls();
+
+        if (!publishedProducts.length) {
             productGrid.innerHTML = `
                 <div class="empty">
-                    Produk tidak ditemukan.
+                    Tidak ada produk published.
+                    Produk draft dan archived
+                    disembunyikan dari Ads.
                 </div>
             `;
         } else {
             productGrid.innerHTML =
-                data.products
+                publishedProducts
                     .map(productCard)
                     .join("");
         }
 
         globalStatus.textContent =
-            `${data.products.length} dari `
-            + `${data.total} produk ditampilkan`;
+            `${publishedProducts.length} dari `
+            + `${Number(data.total || 0)} `
+            + "produk published ditampilkan";
 
     } catch (error) {
         productGrid.innerHTML = `
             <div class="empty">
-                ${escapeHtml(error.message)}
+                ${escapeHtml(
+                    error.message
+                )}
             </div>
         `;
 
@@ -1243,14 +3194,13 @@ async function loadProducts() {
     }
 }
 
-
 async function syncProducts() {
     syncButton.disabled = true;
     syncButton.textContent =
         "Sinkronisasi...";
 
     globalStatus.textContent =
-        "Mengambil produk dari Spacecraft...";
+        "Mengambil status produk dari Spacecraft...";
 
     try {
         const data = await api(
@@ -1262,8 +3212,12 @@ async function syncProducts() {
 
         globalStatus.textContent =
             `Sinkronisasi selesai: `
-            + `${data.created} baru, `
-            + `${data.updated} diperbarui`;
+            + `${Number(
+                data.published_local || 0
+            )} published ditampilkan, `
+            + `${Number(
+                data.hidden_received || 0
+            )} draft/archived disembunyikan`;
 
         await loadProducts();
         await loadHealth();
@@ -1279,7 +3233,6 @@ async function syncProducts() {
             "Sinkronkan Spacecraft";
     }
 }
-
 
 async function logout() {
     try {
@@ -2667,6 +4620,30 @@ generateMultiCampaignButton?.addEventListener(
     generateMultiProductCampaign
 );
 
+singleProductSelect?.addEventListener(
+    "change",
+    event => {
+        loadSingleProductRawVideos(
+            Number(event.target.value || 0)
+        );
+    }
+);
+
+singleProductGenerateButton?.addEventListener(
+    "click",
+    generateSingleProductCampaign
+);
+
+singleProductVoiceoverEnabled?.addEventListener(
+    "change",
+    toggleSingleProductVoiceControls
+);
+
+singleProductVoiceMode?.addEventListener(
+    "change",
+    toggleSingleProductVoiceControls
+);
+
 document.addEventListener(
     "keydown",
     event => {
@@ -2688,7 +4665,10 @@ window.generateImageVariations =
 
 loadHealth();
 loadProducts();
+loadB19aCatalogs();
+b19cRenderCreativeSet();
 loadMultiVoiceOptions();
+loadSingleProductVoiceOptions();
 
 
 let campaignPollTimer = null;
@@ -2754,6 +4734,118 @@ function campaignCard(campaign) {
         </article>`;
 }
 
+function campaignHistoryMeta(campaign) {
+    const settings = campaign.settings || {};
+    const productCount = Number(settings.product_count || 1);
+    const productLabel = productCount > 1
+        ? ` | ${productCount} produk`
+        : "";
+
+    return `${campaignTemplateLabel(settings)} | ${campaignAudienceLabel(settings)}${productLabel} | ${campaign.status} | ${campaign.completed_count}/${campaign.variations} selesai | ${campaign.failed_count} gagal${settings.voiceover_enabled ? " | VO ElevenLabs" : ""}`;
+}
+
+function renderCampaignHistoryPagination(total, page, pageSize) {
+    const pageCount = Math.max(1, Math.ceil(total / pageSize));
+    const start = total ? ((page - 1) * pageSize) + 1 : 0;
+    const end = Math.min(total, page * pageSize);
+
+    return `
+        <div class="campaign-pagination">
+            <label class="campaign-page-size">
+                Tampilkan
+                <select onchange="setCampaignHistoryPageSize(this.value)">
+                    <option value="5" ${pageSize === 5 ? "selected" : ""}>5</option>
+                    <option value="10" ${pageSize === 10 ? "selected" : ""}>10</option>
+                </select>
+                row
+            </label>
+            <div class="campaign-page-actions">
+                <small>${start}-${end} dari ${total}</small>
+                <button type="button" class="mini-button" onclick="setCampaignHistoryPage(${page - 1})" ${page <= 1 ? "disabled" : ""}>Sebelumnya</button>
+                <span>${page}/${pageCount}</span>
+                <button type="button" class="mini-button" onclick="setCampaignHistoryPage(${page + 1})" ${page >= pageCount ? "disabled" : ""}>Berikutnya</button>
+            </div>
+        </div>
+    `;
+}
+
+function renderCampaignHistoryTable(campaigns) {
+    if (!campaigns.length) {
+        return `
+            <div class="empty">
+                Belum ada raw video catalog ads.
+            </div>
+        `;
+    }
+
+    const pageSize = Number(state.campaignHistoryPageSize || 5);
+    const pageCount = Math.max(1, Math.ceil(campaigns.length / pageSize));
+    const page = Math.min(
+        Math.max(1, Number(state.campaignHistoryPage || 1)),
+        pageCount
+    );
+    state.campaignHistoryPage = page;
+
+    const visibleCampaigns = campaigns.slice(
+        (page - 1) * pageSize,
+        page * pageSize
+    );
+
+    return `
+        <div class="campaign-table">
+            ${renderCampaignHistoryPagination(campaigns.length, page, pageSize)}
+            <div class="campaign-table-head">
+                <span>Campaign</span>
+                <span>Progress</span>
+                <span>Status</span>
+                <span>Aksi</span>
+            </div>
+            ${visibleCampaigns.map(campaign => {
+                const progress = campaignProgress(campaign);
+                return `
+                    <article class="campaign-row">
+                        <div class="campaign-main">
+                            <strong>${escapeHtml(campaign.name)}</strong>
+                            <small>${escapeHtml(campaignHistoryMeta(campaign))}</small>
+                        </div>
+                        <div class="campaign-progress-cell">
+                            <div class="campaign-progress-meta">
+                                <span>${campaign.completed_count}/${campaign.variations}</span>
+                                <b>${progress}%</b>
+                            </div>
+                            <div class="progress is-compact">
+                                <span style="width:${progress}%"></span>
+                            </div>
+                        </div>
+                        <div class="campaign-status-cell">
+                            <span class="campaign-pill">${escapeHtml(campaign.status)}</span>
+                            ${campaign.failed_count ? `<span class="campaign-pill is-error">${campaign.failed_count} gagal</span>` : ""}
+                        </div>
+                        <div class="campaign-actions">
+                            <button type="button" class="mini-button" onclick="viewCampaign(${campaign.id}, event)">Lihat</button>
+                            ${campaign.failed_count ? `<button type="button" class="mini-button" onclick="retryCampaign(${campaign.id}, event)">Retry</button>` : ""}
+                            <button type="button" class="mini-button" onclick="deleteCampaign(${campaign.id}, event)">Hapus</button>
+                        </div>
+                        <div id="campaignJobs-${campaign.id}" class="render-grid"></div>
+                    </article>
+                `;
+            }).join("")}
+            ${renderCampaignHistoryPagination(campaigns.length, page, pageSize)}
+        </div>
+    `;
+}
+
+function setCampaignHistoryPage(page) {
+    state.campaignHistoryPage = Math.max(1, Number(page || 1));
+    loadMultiProductCampaigns();
+}
+
+function setCampaignHistoryPageSize(pageSize) {
+    state.campaignHistoryPageSize = Number(pageSize) === 10 ? 10 : 5;
+    state.campaignHistoryPage = 1;
+    loadMultiProductCampaigns();
+}
+
 async function loadCampaigns(productId = state.activeProductId) {
     if (!productId || !document.getElementById('campaignList')) return;
     try {
@@ -2796,6 +4888,489 @@ async function generateCampaign() {
         button.textContent = 'Generate Video';
     }
 }
+
+
+
+let b13VariantRecipes = [];
+
+
+function b13Lines(elementId) {
+    return (
+        document.getElementById(
+            elementId
+        )?.value || ""
+    )
+        .split(/\r?\n/)
+        .map(value => value.trim())
+        .filter(Boolean);
+}
+
+
+function b13AlphaCode(
+    prefix,
+    index
+) {
+    const alphabet =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+    const letter =
+        alphabet[index % alphabet.length];
+
+    const round =
+        Math.floor(index / alphabet.length);
+
+    return (
+        `${prefix}-${letter}`
+        + (
+            round > 0
+                ? `${round + 1}`
+                : ""
+        )
+    );
+}
+
+
+function b13ProductOrders(
+    productClips
+) {
+    const base = productClips.map(
+        item => item.product_id
+    );
+
+    const result = [
+        {
+            code: "ORDER-A",
+            label: "Urutan Asli",
+            order: base,
+        },
+    ];
+
+    if (
+        document.getElementById(
+            "b13OrderReverse"
+        )?.checked
+    ) {
+        result.push({
+            code: "ORDER-B",
+            label: "Urutan Terbalik",
+            order: [...base].reverse(),
+        });
+    }
+
+    if (
+        document.getElementById(
+            "b13OrderRotate"
+        )?.checked
+        && base.length > 1
+    ) {
+        result.push({
+            code: "ORDER-C",
+            label: "Rotasi Produk",
+            order: [
+                ...base.slice(1),
+                base[0],
+            ],
+        });
+    }
+
+    return result;
+}
+
+
+function b13BuildRecipes() {
+    const productClips =
+        selectedCampaignProductClips();
+
+    if (
+        productClips.length < 5
+        || productClips.length > 6
+    ) {
+        throw new Error(
+            "Pilih 5–6 produk sebelum "
+            + "membuat variant matrix."
+        );
+    }
+
+    const hooks = (
+        b13Lines("b13HookVariants")
+        .length
+            ? b13Lines(
+                "b13HookVariants"
+            )
+            : [null]
+    );
+
+    const ctas = (
+        b13Lines("b13CtaVariants")
+        .length
+            ? b13Lines(
+                "b13CtaVariants"
+            )
+            : [null]
+    );
+
+    const promos = (
+        b13Lines("b13PromoVariants")
+        .length
+            ? b13Lines(
+                "b13PromoVariants"
+            )
+            : [null]
+    );
+
+    const voices = (
+        b13Lines("b13VoiceVariants")
+        .length
+            ? b13Lines(
+                "b13VoiceVariants"
+            )
+            : [null]
+    );
+
+    const orders =
+        b13ProductOrders(productClips);
+
+    const hardLimit = 24;
+
+    const requestedLimit = Math.max(
+        1,
+        Math.min(
+            hardLimit,
+            Number(
+                document.getElementById(
+                    "b13MaxVariants"
+                )?.value || 12
+            )
+        )
+    );
+
+    const recipes = [];
+    const duplicateKeys = new Set();
+
+    outer:
+    for (
+        let hookIndex = 0;
+        hookIndex < hooks.length;
+        hookIndex += 1
+    ) {
+        for (
+            let ctaIndex = 0;
+            ctaIndex < ctas.length;
+            ctaIndex += 1
+        ) {
+            for (
+                let promoIndex = 0;
+                promoIndex < promos.length;
+                promoIndex += 1
+            ) {
+                for (
+                    let orderIndex = 0;
+                    orderIndex < orders.length;
+                    orderIndex += 1
+                ) {
+                    for (
+                        let voiceIndex = 0;
+                        voiceIndex < voices.length;
+                        voiceIndex += 1
+                    ) {
+                        const recipe = {
+                            hook:
+                                hooks[hookIndex],
+                            cta:
+                                ctas[ctaIndex],
+                            promo_text:
+                                promos[promoIndex],
+                            voiceover_text:
+                                voices[voiceIndex],
+                            product_order:
+                                orders[orderIndex]
+                                    .order,
+                            hook_code:
+                                b13AlphaCode(
+                                    "HOOK",
+                                    hookIndex
+                                ),
+                            cta_code:
+                                b13AlphaCode(
+                                    "CTA",
+                                    ctaIndex
+                                ),
+                            promo_code:
+                                b13AlphaCode(
+                                    "PROMO",
+                                    promoIndex
+                                ),
+                            order_code:
+                                orders[orderIndex]
+                                    .code,
+                            voice_code:
+                                b13AlphaCode(
+                                    "VOICE",
+                                    voiceIndex
+                                ),
+                            enabled: true,
+                        };
+
+                        recipe.label = [
+                            recipe.hook_code,
+                            recipe.cta_code,
+                            recipe.promo_code,
+                            recipe.order_code,
+                            recipe.voice_code,
+                        ].join(" · ");
+
+                        const key = JSON.stringify({
+                            hook: recipe.hook,
+                            cta: recipe.cta,
+                            promo:
+                                recipe.promo_text,
+                            voice:
+                                recipe.voiceover_text,
+                            order:
+                                recipe.product_order,
+                        });
+
+                        if (
+                            duplicateKeys.has(key)
+                        ) {
+                            continue;
+                        }
+
+                        duplicateKeys.add(key);
+                        recipes.push(recipe);
+
+                        if (
+                            recipes.length
+                            >= requestedLimit
+                        ) {
+                            break outer;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return {
+        recipes,
+        theoreticalCount:
+            hooks.length
+            * ctas.length
+            * promos.length
+            * voices.length
+            * orders.length,
+        requestedLimit,
+    };
+}
+
+
+function renderB13VariantPreview() {
+    const target = document.getElementById(
+        "b13VariantPreview"
+    );
+
+    const summary = document.getElementById(
+        "b13VariantSummary"
+    );
+
+    if (!target || !summary) return;
+
+    try {
+        const result =
+            b13BuildRecipes();
+
+        b13VariantRecipes =
+            result.recipes;
+
+        summary.className =
+            "b13-variant-summary is-ready";
+
+        summary.textContent =
+            `${result.recipes.length} kombinasi `
+            + `dipilih dari `
+            + `${result.theoreticalCount} kemungkinan.`;
+
+        target.innerHTML =
+            result.recipes.map(
+                (recipe, index) => `
+                    <label
+                        class="b13-recipe-card"
+                        data-recipe-index="${index}"
+                    >
+                        <input
+                            type="checkbox"
+                            class="b13RecipeCheckbox"
+                            data-index="${index}"
+                            checked
+                            onchange="
+                                updateB13VariantCount()
+                            "
+                        >
+
+                        <div class="b13-recipe-copy">
+                            <strong>
+                                Variant ${index + 1}
+                            </strong>
+
+                            <span>
+                                ${escapeHtml(
+                                    recipe.label
+                                )}
+                            </span>
+
+                            <small>
+                                Hook:
+                                ${escapeHtml(
+                                    recipe.hook
+                                    || "Auto system"
+                                )}
+                            </small>
+
+                            <small>
+                                CTA:
+                                ${escapeHtml(
+                                    recipe.cta
+                                    || "Auto system"
+                                )}
+                            </small>
+
+                            <small>
+                                Promo:
+                                ${escapeHtml(
+                                    recipe.promo_text
+                                    || "Promo campaign"
+                                )}
+                            </small>
+                        </div>
+                    </label>
+                `
+            ).join("");
+
+        updateB13VariantCount();
+
+    } catch (error) {
+        b13VariantRecipes = [];
+
+        summary.className =
+            "b13-variant-summary is-error";
+
+        summary.textContent =
+            error.message;
+
+        target.innerHTML = `
+            <div class="b13-empty">
+                Lengkapi produk dan raw video,
+                lalu buat preview matrix.
+            </div>
+        `;
+    }
+}
+
+
+function updateB13VariantCount() {
+    const checked = [
+        ...document.querySelectorAll(
+            ".b13RecipeCheckbox:checked"
+        )
+    ];
+
+    const count = checked.length;
+
+    const countTarget =
+        document.getElementById(
+            "b13SelectedCount"
+        );
+
+    if (countTarget) {
+        countTarget.textContent =
+            `${count} variant dipilih`;
+    }
+
+    const variationInput =
+        document.getElementById(
+            "multiCampaignVariations"
+        );
+
+    if (
+        variationInput
+        && count > 0
+    ) {
+        variationInput.value =
+            Math.min(count, 20);
+    }
+}
+
+
+function getSelectedB13Recipes() {
+    return [
+        ...document.querySelectorAll(
+            ".b13RecipeCheckbox:checked"
+        )
+    ]
+        .map(input => (
+            b13VariantRecipes[
+                Number(input.dataset.index)
+            ]
+        ))
+        .filter(Boolean)
+        .slice(0, 24);
+}
+
+
+function clearB13VariantMatrix() {
+    b13VariantRecipes = [];
+
+    document.querySelectorAll(
+        "#b13HookVariants,"
+        + "#b13CtaVariants,"
+        + "#b13PromoVariants,"
+        + "#b13VoiceVariants"
+    ).forEach(element => {
+        element.value = "";
+    });
+
+    const reverse =
+        document.getElementById(
+            "b13OrderReverse"
+        );
+
+    const rotate =
+        document.getElementById(
+            "b13OrderRotate"
+        );
+
+    if (reverse) reverse.checked = false;
+    if (rotate) rotate.checked = false;
+
+    const target =
+        document.getElementById(
+            "b13VariantPreview"
+        );
+
+    const summary =
+        document.getElementById(
+            "b13VariantSummary"
+        );
+
+    if (target) {
+        target.innerHTML = `
+            <div class="b13-empty">
+                Belum ada variant matrix.
+            </div>
+        `;
+    }
+
+    if (summary) {
+        summary.className =
+            "b13-variant-summary";
+
+        summary.textContent =
+            "Mode variasi standar aktif.";
+    }
+
+    updateB13VariantCount();
+}
+
 
 
 
@@ -3729,6 +6304,7 @@ function resetCreativeTemplateManual() {
 function bindCreativeTemplateManualTracking() {
     const trackedIds = [
         "multiCampaignVariations",
+        "multiCampaignVoiceId",
         "multiCampaignAudience",
         "multiCampaignDuration",
         "multiCampaignAspect",
@@ -3819,11 +6395,17 @@ function buildAutomationCampaignPayload() {
             )?.value
             || "custom_manual",
 
-        variations: Number(
-            document.getElementById(
-                "multiCampaignVariations"
-            )?.value || 1
+        variations: (
+            getSelectedB13Recipes().length
+            || Number(
+                document.getElementById(
+                    "multiCampaignVariations"
+                )?.value || 1
+            )
         ),
+
+        variant_recipes:
+            getSelectedB13Recipes(),
 
         product_clips: productClips,
 
@@ -3834,6 +6416,12 @@ function buildAutomationCampaignPayload() {
             || "retail_bulk",
 
         min_order_qty: 6,
+
+        // B18C_RAW_COPY_PAYLOAD
+
+        hook: document.getElementById("multiCampaignHook")?.value.trim() || null,
+
+        cta: document.getElementById("multiCampaignCta")?.value.trim() || null,
 
         duration_seconds: Number(
             document.getElementById(
@@ -4362,6 +6950,10 @@ async function deleteAutomationRule(
 
 
 
+// B18I_SINGLE_SUBMIT_STATE
+let rawCatalogSubmissionInFlight = false;
+let rawCatalogSubmissionStartedAt = 0;
+
 async function generateMultiProductCampaign() {
     const button = generateMultiCampaignButton;
     const message = multiCampaignMessage;
@@ -4392,6 +6984,16 @@ async function generateMultiProductCampaign() {
         return;
     }
 
+    if (rawCatalogSubmissionInFlight) {
+        message.textContent =
+            "Permintaan render sedang diproses. "
+            + "Mohon tunggu, jangan klik ulang.";
+        return;
+    }
+
+    rawCatalogSubmissionInFlight = true;
+    rawCatalogSubmissionStartedAt = Date.now();
+
     button.disabled = true;
     button.textContent = "Membuat Antrean...";
     message.textContent = "Menyiapkan video katalog...";
@@ -4421,16 +7023,84 @@ async function generateMultiProductCampaign() {
             return;
         }
 
+        const selectedVariantRecipes =
+            getSelectedB13Recipes();
+
+        if (selectedVariantRecipes.length > 24) {
+            message.textContent =
+                "Maksimal 24 variant per campaign.";
+            return;
+        }
+
+        if (
+            state.b19aCatalogSourceMode
+            === "custom"
+            && !state.b19cCreativeSet
+        ) {
+            await b19cPrepareCustom(
+                selectedProductIds()
+            );
+        }
+
         const payload = {
+            // B19A_LINKED_CATALOG_PAYLOAD
+            catalog_source:
+                state.b19aCatalogSourceMode
+                || "custom",
+            catalog_code: (
+                state.b19aCatalogSourceMode
+                === "spacecraft"
+                ? (
+                    state.b19aLinkedCatalog
+                    ?.catalog_code
+                    || null
+                )
+                : null
+            ),
+            catalog_hash: (
+                state.b19aCatalogSourceMode
+                === "spacecraft"
+                ? (
+                    state.b19aLinkedCatalog
+                    ?.catalog_hash
+                    || null
+                )
+                : null
+            ),
+            pricing_source: (
+                document.getElementById(
+                    "b19aPricingSource"
+                )?.value
+                || state.b19aPricingSource
+                || "meta"
+            ),
+            // B19C_CREATIVE_SET_PAYLOAD
+            creative_set_code: (
+                state.b19cCreativeSet
+                ?.creative_set_code
+                || null
+            ),
             name: document.getElementById("multiCampaignName").value.trim() || null,
             creative_template:
                 document.getElementById(
                     "multiCampaignTemplate"
                 )?.value || "custom_manual",
-            variations: Number(document.getElementById("multiCampaignVariations").value),
+            variations: (
+                selectedVariantRecipes.length
+                    || Number(
+                        document.getElementById(
+                            "multiCampaignVariations"
+                        ).value
+                    )
+            ),
+            variant_recipes:
+                selectedVariantRecipes,
             product_clips: productClips,
             audience: document.getElementById("multiCampaignAudience").value,
             min_order_qty: 6,
+            // B18C_RAW_COPY_PAYLOAD
+            hook: document.getElementById("multiCampaignHook")?.value.trim() || null,
+            cta: document.getElementById("multiCampaignCta")?.value.trim() || null,
             duration_seconds: Number(document.getElementById("multiCampaignDuration").value),
             aspect_ratio: document.getElementById("multiCampaignAspect").value,
             export_preset:
@@ -4459,11 +7129,25 @@ async function generateMultiProductCampaign() {
                 : null,
             voiceover_mode: document.getElementById("multiCampaignVoiceMode")?.value || "auto",
             voiceover_text: document.getElementById("multiCampaignVoiceText")?.value.trim() || null,
+            approved_voice_asset_id: multiVoiceoverEnabled
+                ? (window.B18GApprovedVoiceAsset?.asset_id || null)
+                : null,
+            approved_voice_fingerprint: multiVoiceoverEnabled
+                ? (window.B18GApprovedVoiceAsset?.fingerprint || null)
+                : null,
+            approved_voice_duration_seconds: multiVoiceoverEnabled
+                ? (Number(window.B18GApprovedVoiceAsset?.duration_seconds) || null)
+                : null,
         };
 
         const data = await api("/api/campaigns/raw-video-catalog", {
             method: "POST",
-            headers: {"Content-Type": "application/json"},
+            headers: {
+                "Content-Type": "application/json",
+                "X-Client-Submission": (
+                    `catalog-${rawCatalogSubmissionStartedAt}`
+                ),
+            },
             body: JSON.stringify(payload),
         });
 
@@ -4472,6 +7156,8 @@ async function generateMultiProductCampaign() {
     } catch (error) {
         message.textContent = `Generate gagal: ${error.message}`;
     } finally {
+        rawCatalogSubmissionInFlight = false;
+        rawCatalogSubmissionStartedAt = 0;
         button.disabled = false;
         button.textContent = "Render Catalog Video";
     }
@@ -4502,21 +7188,108 @@ async function restoreExpandedCampaigns() {
 }
 
 async function loadMultiProductCampaigns() {
-    if (!multiCampaignList) return;
+    // B18B_CAMPAIGN_HISTORY_DYNAMIC_TARGET_START
+    // Jangan memakai referensi DOM yang ditangkap saat startup.
+    // Bagian form dapat dirender ulang sehingga node lama terlepas
+    // dari document setelah hard refresh atau perubahan setting.
+    const target = document.getElementById(
+        "multiCampaignList"
+    );
+
+    if (!target || !target.isConnected) {
+        return;
+    }
 
     try {
-        const data = await api("/api/campaigns/multi-product");
-        multiCampaignList.innerHTML = data.campaigns.length
-            ? data.campaigns.map(campaignCard).join("")
-            : '<div class="empty">Belum ada raw video catalog ads.</div>';
+        const data = await api(
+            "/api/campaigns/multi-product"
+        );
+
+        const campaigns = Array.isArray(
+            data?.campaigns
+        )
+            ? data.campaigns
+            : [];
+
+        target.hidden = false;
+        target.style.removeProperty("display");
+        target.dataset.campaignHistoryCount = String(
+            campaigns.length
+        );
+        target.dataset.campaignHistoryLoadedAt = (
+            new Date().toISOString()
+        );
+
+        target.innerHTML = renderCampaignHistoryTable(
+            campaigns
+        );
+
         await restoreExpandedCampaigns();
     } catch (error) {
-        multiCampaignList.innerHTML = `
+        const currentTarget = document.getElementById(
+            "multiCampaignList"
+        );
+
+        if (!currentTarget) {
+            return;
+        }
+
+        currentTarget.hidden = false;
+        currentTarget.style.removeProperty("display");
+        currentTarget.innerHTML = `
             <div class="empty">
-                Gagal memuat catalog ads: ${escapeHtml(error.message)}
+                Gagal memuat catalog ads:
+                ${escapeHtml(error.message)}
             </div>
         `;
     }
+    // B18B_CAMPAIGN_HISTORY_DYNAMIC_TARGET_END
+}
+
+function scheduleMultiCampaignHistoryRefresh() {
+    if (
+        window.__b18fLegacyCampaignBootstrapBound
+    ) {
+        return;
+    }
+
+    window.__b18fLegacyCampaignBootstrapBound =
+        true;
+
+    const refresh = () => {
+        if (
+            window.B18FCampaignHistory
+            || window.B18BCampaignHistoryV3
+        ) {
+            return;
+        }
+
+        Promise.resolve(
+            loadMultiProductCampaigns()
+        ).catch(() => {});
+    };
+
+    refresh();
+
+    setTimeout(
+        refresh,
+        800
+    );
+
+    window.addEventListener(
+        "pageshow",
+        refresh,
+        {passive: true}
+    );
+
+    document.addEventListener(
+        "visibilitychange",
+        () => {
+            if (!document.hidden) {
+                refresh();
+            }
+        }
+    );
 }
 
 function qaStatusClass(
@@ -4661,10 +7434,88 @@ function renderReviewRatingOptions(
 }
 
 
+// B18J_DESCRIPTIVE_DOWNLOAD_FILENAMES
+function b18jFileSlug(value, fallback = "campaign") {
+    const slug = String(value || "")
+        .trim()
+        .toLowerCase()
+        .normalize("NFKD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 40);
+
+    return slug || fallback;
+}
+
+function b18jCampaignCode(campaign) {
+    return `CMP${String(
+        Number(campaign?.id || 0)
+    ).padStart(6, "0")}`;
+}
+
+function b18jDownloadFilename(
+    campaign,
+    job,
+    kind = "video"
+) {
+    const review =
+        job?.review
+        || job?.config?.review
+        || {};
+
+    const parts = [
+        "spacecraft",
+        b18jCampaignCode(campaign),
+        b18jFileSlug(
+            campaign?.name,
+            "campaign"
+        ),
+    ];
+
+    const templateSlug = b18jFileSlug(
+        job?.config?.creative_template_label
+        || job?.config?.creative_template
+        || "",
+        ""
+    );
+
+    if (
+        templateSlug
+        && !parts.includes(templateSlug)
+    ) {
+        parts.push(templateSlug);
+    }
+
+    parts.push(
+        `v${String(
+            Number(job?.variation_index || 1)
+        ).padStart(2, "0")}`
+    );
+
+    if (review.status === "approved") {
+        parts.push("approved");
+    }
+
+    if (review.winner) {
+        parts.push("winner");
+    }
+
+    if (kind === "thumbnail") {
+        parts.push("thumbnail");
+    }
+
+    return `${parts.join("-")}.${
+        kind === "thumbnail" ? "jpg" : "mp4"
+    }`;
+}
+
+
 function renderJobCard(
     job,
-    campaignId
+    campaign
 ) {
+    const campaignId = campaign.id;
     const templateLabel =
         job.config?.creative_template_label
         || "Custom Manual";
@@ -4925,8 +7776,13 @@ function renderJobCard(
                             href="${escapeHtml(
                                 job.output_url
                             )}"
-                            target="_blank"
-                            download
+                            download="${escapeHtml(
+                                b18jDownloadFilename(
+                                    campaign,
+                                    job,
+                                    "video"
+                                )
+                            )}"
                         >
                             Download Approved MP4
                         </a>
@@ -4939,8 +7795,13 @@ function renderJobCard(
                             href="${escapeHtml(
                                 job.thumbnail_url
                             )}"
-                            target="_blank"
-                            download
+                            download="${escapeHtml(
+                                b18jDownloadFilename(
+                                    campaign,
+                                    job,
+                                    "thumbnail"
+                                )
+                            )}"
                         >
                             Download Thumbnail
                         </a>
@@ -5033,10 +7894,2274 @@ function renderCampaignReviewToolbar(
 }
 
 
+function b11CopyGroup(
+    title,
+    items
+) {
+    return `
+        <section class="b11-copy-group">
+            <h5>${escapeHtml(title)}</h5>
+
+            ${(items || []).map(
+                (item, index) => `
+                    <div class="b11-copy-item">
+                        <span>
+                            ${escapeHtml(item)}
+                        </span>
+
+                        <button
+                            type="button"
+                            class="mini-button"
+                            onclick="
+                                copyB11Text(
+                                    this,
+                                    ${JSON.stringify(item)}
+                                )
+                            "
+                        >
+                            Copy
+                        </button>
+                    </div>
+                `
+            ).join("")}
+        </section>
+    `;
+}
+
+
+function renderCampaignAdCopy(
+    campaignId,
+    copy
+) {
+    const target = document.getElementById(
+        `campaignAdCopy-${campaignId}`
+    );
+
+    if (!target) return;
+
+    target.innerHTML = `
+        <div class="b11-copy-header">
+            <div>
+                <strong>
+                    ${escapeHtml(
+                        copy.campaign_code
+                    )}
+                </strong>
+
+                <small>
+                    ${escapeHtml(
+                        copy.template || ""
+                    )}
+                    •
+                    ${escapeHtml(
+                        copy.audience || ""
+                    )}
+                </small>
+            </div>
+        </div>
+
+        ${b11CopyGroup(
+            "Primary Text",
+            copy.primary_texts
+        )}
+
+        ${b11CopyGroup(
+            "Headlines",
+            copy.headlines
+        )}
+
+        ${b11CopyGroup(
+            "Descriptions",
+            copy.descriptions
+        )}
+
+        ${b11CopyGroup(
+            "CTA Recommendation",
+            [copy.cta_recommendation]
+        )}
+
+        ${b11CopyGroup(
+            "WhatsApp Opening",
+            [copy.whatsapp_opening]
+        )}
+    `;
+
+    target.hidden = false;
+}
+
+
+async function generateCampaignAdCopy(
+    campaignId
+) {
+    const target = document.getElementById(
+        `campaignAdCopy-${campaignId}`
+    );
+
+    if (target) {
+        target.hidden = false;
+        target.innerHTML = `
+            <div class="b11-loading">
+                Menyiapkan ad copy...
+            </div>
+        `;
+    }
+
+    try {
+        const data = await api(
+            `/api/campaigns/${campaignId}/ad-copy`
+        );
+
+        renderCampaignAdCopy(
+            campaignId,
+            data.copy
+        );
+    } catch (error) {
+        if (target) {
+            target.innerHTML = `
+                <div class="b11-error">
+                    Gagal: ${escapeHtml(
+                        error.message
+                    )}
+                </div>
+            `;
+        }
+    }
+}
+
+
+async function downloadCampaignPackage(
+    campaignId
+) {
+    const message = document.getElementById(
+        `campaignExportMessage-${campaignId}`
+    );
+
+    if (message) {
+        message.textContent =
+            "Membuat ZIP campaign...";
+    }
+
+    try {
+        const data = await api(
+            `/api/campaigns/${campaignId}/export-package`,
+            {
+                method: "POST",
+            }
+        );
+
+        if (message) {
+            message.textContent =
+                `${data.package.approved_count} `
+                + "video Approved masuk paket.";
+        }
+
+        const link = document.createElement(
+            "a"
+        );
+
+        link.href =
+            data.package.package_url;
+
+        link.download =
+            data.package.package_name;
+
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+
+    } catch (error) {
+        if (message) {
+            message.textContent =
+                `Gagal: ${error.message}`;
+        }
+    }
+}
+
+
+async function copyB11Text(
+    button,
+    value
+) {
+    try {
+        await navigator.clipboard.writeText(
+            value
+        );
+
+        const original =
+            button.textContent;
+
+        button.textContent = "Copied";
+
+        setTimeout(() => {
+            button.textContent =
+                original;
+        }, 1200);
+
+    } catch (error) {
+        const textarea =
+            document.createElement(
+                "textarea"
+            );
+
+        textarea.value = value;
+        document.body.appendChild(
+            textarea
+        );
+
+        textarea.select();
+        document.execCommand("copy");
+        textarea.remove();
+
+        button.textContent = "Copied";
+    }
+}
+
+
+function b12Currency(value) {
+    return new Intl.NumberFormat(
+        "id-ID",
+        {
+            style: "currency",
+            currency: "IDR",
+            maximumFractionDigits: 0,
+        }
+    ).format(
+        Number(value || 0)
+    );
+}
+
+
+function b12Number(value) {
+    return new Intl.NumberFormat(
+        "id-ID"
+    ).format(
+        Number(value || 0)
+    );
+}
+
+
+function b12Percent(value) {
+    return (
+        Number(value || 0)
+        .toFixed(2)
+        + "%"
+    );
+}
+
+
+function b12RecommendationClass(
+    recommendation
+) {
+    return (
+        `b12-recommendation-${recommendation
+            || "keep_testing"}`
+    );
+}
+
+
+function renderPerformanceMetric(
+    label,
+    value
+) {
+    return `
+        <div class="b12-summary-metric">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value)}</strong>
+        </div>
+    `;
+}
+
+
+function renderPerformanceEntry(
+    campaignId,
+    item
+) {
+    const metrics = item.metrics || {};
+
+    return `
+        <article class="b12-performance-entry">
+            <div class="b12-entry-head">
+                <div class="b12-entry-title">
+                    ${item.thumbnail_url
+                        ? `
+                            <img
+                                src="${escapeHtml(
+                                    item.thumbnail_url
+                                )}"
+                                alt="Video ${item.variation_index}"
+                            >
+                        `
+                        : `
+                            <div class="b12-thumb-placeholder">
+                                V${item.variation_index}
+                            </div>
+                        `}
+
+                    <div>
+                        <strong>
+                            #${item.rank || "-"}
+                            Video ${item.variation_index}
+                        </strong>
+
+                        <small>
+                            ${escapeHtml(
+                                item.template || "Custom"
+                            )}
+                        </small>
+                    </div>
+                </div>
+
+                <span
+                    class="
+                        b12-recommendation
+                        ${b12RecommendationClass(
+                            metrics.recommendation
+                        )}
+                    "
+                >
+                    ${escapeHtml(
+                        metrics.recommendation_label
+                        || "Keep Testing"
+                    )}
+                </span>
+            </div>
+
+            <div class="b12-entry-score">
+                <span>
+                    Score
+                    <b>${Number(
+                        metrics.score || 0
+                    ).toFixed(1)}</b>
+                </span>
+
+                <span>
+                    CTR
+                    <b>${b12Percent(
+                        metrics.ctr
+                    )}</b>
+                </span>
+
+                <span>
+                    ROAS
+                    <b>${Number(
+                        metrics.roas || 0
+                    ).toFixed(2)}x</b>
+                </span>
+
+                <span>
+                    Closing
+                    <b>${b12Number(
+                        metrics.closings
+                    )}</b>
+                </span>
+            </div>
+
+            <div class="b12-performance-form">
+                <label>
+                    <span>Impressions</span>
+                    <input
+                        id="perfImpressions-${item.job_id}"
+                        type="number"
+                        min="0"
+                        value="${Number(
+                            metrics.impressions || 0
+                        )}"
+                    >
+                </label>
+
+                <label>
+                    <span>Clicks</span>
+                    <input
+                        id="perfClicks-${item.job_id}"
+                        type="number"
+                        min="0"
+                        value="${Number(
+                            metrics.clicks || 0
+                        )}"
+                    >
+                </label>
+
+                <label>
+                    <span>Spend (Rp)</span>
+                    <input
+                        id="perfSpend-${item.job_id}"
+                        type="number"
+                        min="0"
+                        step="1000"
+                        value="${Number(
+                            metrics.spend || 0
+                        )}"
+                    >
+                </label>
+
+                <label>
+                    <span>Leads</span>
+                    <input
+                        id="perfLeads-${item.job_id}"
+                        type="number"
+                        min="0"
+                        value="${Number(
+                            metrics.leads || 0
+                        )}"
+                    >
+                </label>
+
+                <label>
+                    <span>Closing</span>
+                    <input
+                        id="perfClosings-${item.job_id}"
+                        type="number"
+                        min="0"
+                        value="${Number(
+                            metrics.closings || 0
+                        )}"
+                    >
+                </label>
+
+                <label>
+                    <span>Revenue (Rp)</span>
+                    <input
+                        id="perfRevenue-${item.job_id}"
+                        type="number"
+                        min="0"
+                        step="1000"
+                        value="${Number(
+                            metrics.revenue || 0
+                        )}"
+                    >
+                </label>
+            </div>
+
+            <label class="b12-notes-field">
+                <span>Catatan</span>
+
+                <textarea
+                    id="perfNotes-${item.job_id}"
+                    rows="2"
+                    placeholder="Catatan performa, audience, placement, atau hasil testing..."
+                >${escapeHtml(
+                    metrics.notes || ""
+                )}</textarea>
+            </label>
+
+            <div class="b12-entry-detail">
+                <span>
+                    CPM:
+                    <b>${b12Currency(
+                        metrics.cpm
+                    )}</b>
+                </span>
+
+                <span>
+                    CPC:
+                    <b>${b12Currency(
+                        metrics.cpc
+                    )}</b>
+                </span>
+
+                <span>
+                    CPL:
+                    <b>${b12Currency(
+                        metrics.cpl
+                    )}</b>
+                </span>
+
+                <span>
+                    Lead CVR:
+                    <b>${b12Percent(
+                        metrics.lead_conversion
+                    )}</b>
+                </span>
+
+                <span>
+                    Closing CVR:
+                    <b>${b12Percent(
+                        metrics.closing_conversion
+                    )}</b>
+                </span>
+
+                <span>
+                    Profit:
+                    <b>${b12Currency(
+                        metrics.profit
+                    )}</b>
+                </span>
+            </div>
+
+            <div class="b12-recommendation-reason">
+                ${escapeHtml(
+                    metrics.recommendation_reason
+                    || ""
+                )}
+            </div>
+
+            <div class="b12-entry-actions">
+                <button
+                    type="button"
+                    class="mini-button"
+                    onclick="
+                        savePerformanceEntry(
+                            ${campaignId},
+                            ${item.job_id}
+                        )
+                    "
+                >
+                    Simpan Performa
+                </button>
+
+                <button
+                    type="button"
+                    class="mini-button danger"
+                    onclick="
+                        deletePerformanceEntry(
+                            ${campaignId},
+                            ${item.job_id}
+                        )
+                    "
+                >
+                    Reset
+                </button>
+            </div>
+
+            <div
+                id="perfMessage-${item.job_id}"
+                class="b12-entry-message"
+            ></div>
+        </article>
+    `;
+}
+
+
+function renderPerformanceDimension(
+    title,
+    items
+) {
+    return `
+        <section class="b12-dimension-card">
+            <h5>${escapeHtml(title)}</h5>
+
+            ${(items || []).length
+                ? items.slice(0, 5).map(
+                    (item, index) => `
+                        <div class="b12-dimension-row">
+                            <span>
+                                ${index + 1}.
+                                ${escapeHtml(
+                                    item.label || "-"
+                                )}
+                            </span>
+
+                            <b>
+                                ${Number(
+                                    item.average_score
+                                    || 0
+                                ).toFixed(1)}
+                            </b>
+                        </div>
+                    `
+                ).join("")
+                : `
+                    <div class="b12-empty-small">
+                        Belum ada data.
+                    </div>
+                `}
+        </section>
+    `;
+}
+
+
+function renderCampaignPerformance(
+    campaignId,
+    dashboard
+) {
+    const target = document.getElementById(
+        `campaignPerformanceContent-${campaignId}`
+    );
+
+    if (!target) return;
+
+    const totals =
+        dashboard.totals || {};
+
+    const winner =
+        dashboard.performance_winner;
+
+    target.innerHTML = `
+        <div class="b12-summary-grid">
+            ${renderPerformanceMetric(
+                "Impressions",
+                b12Number(totals.impressions)
+            )}
+
+            ${renderPerformanceMetric(
+                "Clicks",
+                b12Number(totals.clicks)
+            )}
+
+            ${renderPerformanceMetric(
+                "CTR",
+                b12Percent(totals.ctr)
+            )}
+
+            ${renderPerformanceMetric(
+                "Spend",
+                b12Currency(totals.spend)
+            )}
+
+            ${renderPerformanceMetric(
+                "Leads",
+                b12Number(totals.leads)
+            )}
+
+            ${renderPerformanceMetric(
+                "Closing",
+                b12Number(totals.closings)
+            )}
+
+            ${renderPerformanceMetric(
+                "Revenue",
+                b12Currency(totals.revenue)
+            )}
+
+            ${renderPerformanceMetric(
+                "ROAS",
+                `${Number(
+                    totals.roas || 0
+                ).toFixed(2)}x`
+            )}
+        </div>
+
+        ${winner
+            ? `
+                <div class="b12-winner-banner">
+                    <div>
+                        <span>
+                            PERFORMANCE WINNER
+                        </span>
+
+                        <strong>
+                            Video ${winner.variation_index}
+                        </strong>
+
+                        <small>
+                            Score ${Number(
+                                winner.metrics.score || 0
+                            ).toFixed(1)}
+                            • ROAS ${Number(
+                                winner.metrics.roas || 0
+                            ).toFixed(2)}x
+                            • ${winner.metrics.closings || 0}
+                            closing
+                        </small>
+                    </div>
+                </div>
+            `
+            : `
+                <div class="b12-no-winner">
+                    Belum ada performance winner.
+                    Masukkan data iklan terlebih dahulu.
+                </div>
+            `}
+
+        <div class="b12-dimension-grid">
+            ${renderPerformanceDimension(
+                "Top Hooks",
+                dashboard.dimensions?.hooks
+            )}
+
+            ${renderPerformanceDimension(
+                "Top Templates",
+                dashboard.dimensions?.templates
+            )}
+
+            ${renderPerformanceDimension(
+                "Top CTA",
+                dashboard.dimensions?.ctas
+            )}
+        </div>
+
+        <div class="b12-entry-grid">
+            ${(dashboard.items || [])
+                .map(
+                    item => renderPerformanceEntry(
+                        campaignId,
+                        item
+                    )
+                )
+                .join("")}
+        </div>
+    `;
+
+    target.hidden = false;
+}
+
+
+async function loadCampaignPerformance(
+    campaignId
+) {
+    const target = document.getElementById(
+        `campaignPerformanceContent-${campaignId}`
+    );
+
+    if (!target) return;
+
+    target.hidden = false;
+    target.innerHTML = `
+        <div class="b12-loading">
+            Memuat performance dashboard...
+        </div>
+    `;
+
+    try {
+        const data = await api(
+            `/api/campaigns/${campaignId}/performance`
+        );
+
+        renderCampaignPerformance(
+            campaignId,
+            data.dashboard
+        );
+
+    } catch (error) {
+        target.innerHTML = `
+            <div class="b12-error">
+                Gagal memuat performa:
+                ${escapeHtml(error.message)}
+            </div>
+        `;
+    }
+}
+
+
+async function savePerformanceEntry(
+    campaignId,
+    jobId
+) {
+    const message = document.getElementById(
+        `perfMessage-${jobId}`
+    );
+
+    if (message) {
+        message.textContent =
+            "Menyimpan performa...";
+    }
+
+    const getNumber = id => Number(
+        document.getElementById(id)?.value
+        || 0
+    );
+
+    try {
+        const data = await api(
+            `/api/campaigns/${campaignId}`
+            + `/jobs/${jobId}/performance`,
+            {
+                method: "PUT",
+                headers: {
+                    "Content-Type":
+                        "application/json",
+                },
+                body: JSON.stringify({
+                    impressions: getNumber(
+                        `perfImpressions-${jobId}`
+                    ),
+                    clicks: getNumber(
+                        `perfClicks-${jobId}`
+                    ),
+                    spend: getNumber(
+                        `perfSpend-${jobId}`
+                    ),
+                    leads: getNumber(
+                        `perfLeads-${jobId}`
+                    ),
+                    closings: getNumber(
+                        `perfClosings-${jobId}`
+                    ),
+                    revenue: getNumber(
+                        `perfRevenue-${jobId}`
+                    ),
+                    notes:
+                        document.getElementById(
+                            `perfNotes-${jobId}`
+                        )?.value.trim()
+                        || null,
+                    source: "manual",
+                }),
+            }
+        );
+
+        if (message) {
+            message.textContent =
+                data.message;
+        }
+
+        await loadCampaignPerformance(
+            campaignId
+        );
+
+    } catch (error) {
+        if (message) {
+            message.textContent =
+                `Gagal: ${error.message}`;
+        }
+    }
+}
+
+
+async function deletePerformanceEntry(
+    campaignId,
+    jobId
+) {
+    if (
+        !confirm(
+            "Reset data performa video ini?"
+        )
+    ) {
+        return;
+    }
+
+    try {
+        await api(
+            `/api/campaigns/${campaignId}`
+            + `/jobs/${jobId}/performance`,
+            {
+                method: "DELETE",
+            }
+        );
+
+        await loadCampaignPerformance(
+            campaignId
+        );
+
+    } catch (error) {
+        alert(
+            `Gagal: ${error.message}`
+        );
+    }
+}
+
+
+async function exportCampaignPerformance(
+    campaignId,
+    format
+) {
+    try {
+        const data = await api(
+            `/api/campaigns/${campaignId}`
+            + `/performance/export`
+            + `?format=${encodeURIComponent(
+                format
+            )}`
+        );
+
+        const mimeType =
+            format === "csv"
+                ? "text/csv;charset=utf-8"
+                : "application/json;charset=utf-8";
+
+        const blob = new Blob(
+            [data.content],
+            {
+                type: mimeType,
+            }
+        );
+
+        const url =
+            URL.createObjectURL(blob);
+
+        const link =
+            document.createElement("a");
+
+        link.href = url;
+        link.download = data.filename;
+
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+
+        URL.revokeObjectURL(url);
+
+    } catch (error) {
+        alert(
+            `Export gagal: ${error.message}`
+        );
+    }
+}
+
+
+function b14FormatJson(value) {
+    return JSON.stringify(
+        value,
+        null,
+        2
+    );
+}
+
+
+function b14PhoneLink(
+    phone,
+    message
+) {
+    const normalized = String(
+        phone || ""
+    ).replace(/[^0-9]/g, "");
+
+    if (!normalized) {
+        return "";
+    }
+
+    return (
+        `https://wa.me/${normalized}`
+        + `?text=${encodeURIComponent(
+            message || ""
+        )}`
+    );
+}
+
+
+function renderB14Events(events) {
+    if (!(events || []).length) {
+        return `
+            <div class="b14-empty">
+                Belum ada attribution event.
+            </div>
+        `;
+    }
+
+    return events.slice(0, 20).map(
+        event => `
+            <div class="b14-event-row">
+                <div>
+                    <strong>
+                        ${escapeHtml(
+                            event.event_type
+                            || "event"
+                        )}
+                    </strong>
+
+                    <span>
+                        ${escapeHtml(
+                            event.phone
+                            || event.order_id
+                            || "-"
+                        )}
+                    </span>
+                </div>
+
+                <small>
+                    ${escapeHtml(
+                        event.created_at
+                        || ""
+                    )}
+                </small>
+            </div>
+        `
+    ).join("");
+}
+
+
+// B15 CATALOG SELECTOR + TRACKED CLICK-TO-WHATSAPP
+function b15StripTrackingLines(message) {
+    return String(message || "")
+        .split("\n")
+        .filter(line => !/^\s*(Campaign|Catalog)\s*:/i.test(line))
+        .join("\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+}
+
+
+function b15TrackedOpening(
+    message,
+    campaignCode,
+    catalogCode
+) {
+    const base = b15StripTrackingLines(message);
+    const tracking = [];
+
+    if (campaignCode) {
+        tracking.push(`Campaign: ${campaignCode}`);
+    }
+
+    if (catalogCode) {
+        tracking.push(`Catalog: ${catalogCode}`);
+    }
+
+    return [base, tracking.join("\n")]
+        .filter(Boolean)
+        .join("\n\n")
+        .trim();
+}
+
+
+function b15CatalogOptions(
+    catalogs,
+    selectedCode
+) {
+    const selected = String(selectedCode || "")
+        .toUpperCase();
+
+    const options = [
+        `<option value="">Pilih Catalog Bundle...</option>`
+    ];
+
+    (catalogs || []).forEach(catalog => {
+        const code = String(
+            catalog.catalog_code
+            || catalog.catalog_id
+            || ""
+        ).trim();
+
+        if (!code) return;
+
+        const name = String(
+            catalog.name || code
+        ).trim();
+        const count = Number(
+            catalog.products_count || 0
+        );
+        const label = `${code} — ${name}`
+            + (count ? ` (${count} produk)` : "");
+
+        options.push(`
+            <option
+                value="${escapeHtml(code)}"
+                data-name="${escapeHtml(name)}"
+                data-products="${count}"
+                data-go-url="${escapeHtml(
+                    catalog.go_url || ""
+                )}"
+                ${code.toUpperCase() === selected
+                    ? "selected"
+                    : ""}
+            >${escapeHtml(label)}</option>
+        `);
+    });
+
+    if (
+        selectedCode
+        && !(catalogs || []).some(
+            catalog => String(
+                catalog.catalog_code
+                || catalog.catalog_id
+                || ""
+            ).toUpperCase() === selected
+        )
+    ) {
+        options.push(`
+            <option
+                value="${escapeHtml(selectedCode)}"
+                selected
+            >${escapeHtml(selectedCode)} — tersimpan</option>
+        `);
+    }
+
+    return options.join("");
+}
+
+
+function b15CampaignState(campaignId) {
+    const campaignCode = document.getElementById(
+        `b14CampaignCode-${campaignId}`
+    )?.value.trim() || "";
+    const catalogCode = document.getElementById(
+        `b14CatalogCode-${campaignId}`
+    )?.value.trim() || "";
+    const sourceCode = document.getElementById(
+        `b14SourceCode-${campaignId}`
+    )?.value.trim() || "spacecraft_ads";
+    const phone = document.getElementById(
+        `b14Phone-${campaignId}`
+    )?.value.trim() || "";
+    const opening = document.getElementById(
+        `b14Opening-${campaignId}`
+    )?.value || "";
+
+    const trackedOpening = b15TrackedOpening(
+        opening,
+        campaignCode,
+        catalogCode
+    );
+    const normalizedPhone = phone.replace(/\D+/g, "");
+
+    const errors = [];
+    if (!campaignCode) errors.push("campaign code");
+    if (!catalogCode) errors.push("Catalog Bundle");
+    if (normalizedPhone.length < 8) errors.push("nomor WhatsApp");
+    if (
+        campaignCode
+        && !trackedOpening.toLowerCase().includes(
+            campaignCode.toLowerCase()
+        )
+    ) errors.push("tracking campaign");
+    if (
+        catalogCode
+        && !trackedOpening.toLowerCase().includes(
+            catalogCode.toLowerCase()
+        )
+    ) errors.push("tracking catalog");
+
+    return {
+        campaignCode,
+        catalogCode,
+        sourceCode,
+        phone,
+        normalizedPhone,
+        opening,
+        trackedOpening,
+        errors,
+        valid: errors.length === 0,
+    };
+}
+
+
+function b15RefreshCampaignState(
+    campaignId,
+    updateOpening = false
+) {
+    let state = b15CampaignState(campaignId);
+    const opening = document.getElementById(
+        `b14Opening-${campaignId}`
+    );
+
+    if (updateOpening && opening) {
+        opening.value = state.trackedOpening;
+        state = b15CampaignState(campaignId);
+    }
+
+    const select = document.getElementById(
+        `b14CatalogCode-${campaignId}`
+    );
+    const option = select?.selectedOptions?.[0];
+    const info = document.getElementById(
+        `b15CatalogInfo-${campaignId}`
+    );
+
+    if (info) {
+        if (state.catalogCode) {
+            const name = option?.dataset?.name || state.catalogCode;
+            const products = Number(
+                option?.dataset?.products || 0
+            );
+            info.textContent = `${name}`
+                + (products ? ` • ${products} produk` : "");
+        } else {
+            info.textContent = "Pilih katalog yang akan dibuka oleh WABot.";
+        }
+    }
+
+    const validation = document.getElementById(
+        `b15Validation-${campaignId}`
+    );
+    if (validation) {
+        validation.className = state.valid
+            ? "b15-validation is-valid"
+            : "b15-validation is-invalid";
+        validation.textContent = state.valid
+            ? "Siap digunakan untuk Click-to-WhatsApp."
+            : `Lengkapi: ${state.errors.join(", ")}.`;
+    }
+
+    const openButton = document.getElementById(
+        `b15OpenWhatsApp-${campaignId}`
+    );
+    if (openButton) {
+        openButton.disabled = !state.valid;
+    }
+
+    return state;
+}
+
+
+function b15ApplyCatalog(campaignId) {
+    b15RefreshCampaignState(campaignId, true);
+}
+
+
+function b15GenerateOpening(campaignId) {
+    const state = b15RefreshCampaignState(
+        campaignId,
+        true
+    );
+    const message = document.getElementById(
+        `b14Message-${campaignId}`
+    );
+    if (message) {
+        message.textContent = state.valid
+            ? "Opening tracking berhasil disiapkan."
+            : `Belum lengkap: ${state.errors.join(", ")}.`;
+    }
+}
+
+
+// B16 ADS ATTRIBUTION BRIDGE
+async function b16TrackWhatsAppClick(
+    campaignId,
+    state,
+    destinationUrl
+) {
+    const message = document.getElementById(
+        `b14Message-${campaignId}`
+    );
+
+    try {
+        const data = await api(
+            `/api/campaigns/${campaignId}/wabot/click`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type":
+                        "application/json",
+                },
+                body: JSON.stringify({
+                    campaign_code:
+                        state.campaignCode,
+                    catalog_code:
+                        state.catalogCode,
+                    source_code:
+                        state.sourceCode,
+                    creative_code:
+                        `${state.campaignCode}-MASTER`,
+                    phone:
+                        state.normalizedPhone,
+                    opening_message:
+                        state.trackedOpening,
+                    destination_url:
+                        destinationUrl,
+                }),
+                keepalive: true,
+            }
+        );
+
+        const spacecraftOk =
+            data.spacecraft?.ok === true;
+
+        if (message) {
+            message.textContent = spacecraftOk
+                ? (
+                    "WhatsApp dibuka dan attribution "
+                    + "tersinkronisasi ke SpaceCraft."
+                )
+                : (
+                    "WhatsApp dibuka. Event lokal tercatat, "
+                    + "sinkronisasi SpaceCraft masih pending."
+                );
+        }
+
+        return data;
+
+    } catch (error) {
+        if (message) {
+            message.textContent =
+                "WhatsApp tetap dibuka. "
+                + "Pencatatan attribution gagal: "
+                + error.message;
+        }
+
+        return null;
+    }
+}
+
+
+function openB15WhatsApp(campaignId) {
+    const state = b15RefreshCampaignState(
+        campaignId,
+        true
+    );
+    const message = document.getElementById(
+        `b14Message-${campaignId}`
+    );
+
+    if (!state.valid) {
+        if (message) {
+            message.textContent =
+                `Belum bisa dibuka: ${state.errors.join(", ")}.`;
+        }
+        return;
+    }
+
+    const link = b14PhoneLink(
+        state.normalizedPhone,
+        state.trackedOpening
+    );
+
+    if (!link) return;
+
+    window.open(
+        link,
+        "_blank",
+        "noopener,noreferrer"
+    );
+
+    void b16TrackWhatsAppClick(
+        campaignId,
+        state,
+        link
+    );
+}
+
+
+function renderCampaignWABot(
+    campaignId,
+    data
+) {
+    const target = document.getElementById(
+        `campaignWABotContent-${campaignId}`
+    );
+
+    if (!target) return;
+
+    const config = data.config || {};
+    const payload = data.payload || {};
+    const campaign =
+        payload.campaign || {};
+    const offer =
+        payload.offer || {};
+    const wabot =
+        payload.wabot || {};
+    const summary =
+        data.summary || {};
+    const catalogs = Array.isArray(data.catalogs)
+        ? data.catalogs
+        : [];
+    const selectedCampaignCode =
+        config.external_campaign_code
+        || campaign.code
+        || "";
+    const selectedCatalogCode =
+        config.catalog_code
+        || campaign.catalog_code
+        || "";
+    const selectedPhone =
+        config.whatsapp_number
+        || wabot.phone
+        || "";
+    const selectedOpening = b15TrackedOpening(
+        config.opening_message
+        || offer.opening_message
+        || "",
+        selectedCampaignCode,
+        selectedCatalogCode
+    );
+
+    target.innerHTML = `
+        <div class="b14-config-grid">
+            <label>
+                <span>Campaign Code</span>
+                <input
+                    id="b14CampaignCode-${campaignId}"
+                    type="text"
+                    value="${escapeHtml(
+                        config.external_campaign_code
+                        || campaign.code
+                        || ""
+                    )}"
+                    placeholder="CMP000001"
+                >
+            </label>
+
+            <label>
+                <span>Catalog Bundle</span>
+                <select
+                    id="b14CatalogCode-${campaignId}"
+                    onchange="b15ApplyCatalog(${campaignId})"
+                >
+                    ${b15CatalogOptions(
+                        catalogs,
+                        selectedCatalogCode
+                    )}
+                </select>
+                <small
+                    id="b15CatalogInfo-${campaignId}"
+                    class="b15-catalog-info"
+                ></small>
+            </label>
+
+            <label>
+                <span>Source Code</span>
+                <input
+                    id="b14SourceCode-${campaignId}"
+                    type="text"
+                    value="${escapeHtml(
+                        config.source_code
+                        || campaign.source_code
+                        || "spacecraft_ads"
+                    )}"
+                    placeholder="meta_ads"
+                >
+            </label>
+
+            <label>
+                <span>Nomor WhatsApp</span>
+                <input
+                    id="b14Phone-${campaignId}"
+                    type="text"
+                    value="${escapeHtml(
+                        selectedPhone
+                    )}"
+                    placeholder="628123456789"
+                    oninput="b15RefreshCampaignState(${campaignId})"
+                >
+            </label>
+        </div>
+
+        <label class="b14-opening-field">
+            <span>WhatsApp Opening Message</span>
+
+            <textarea
+                id="b14Opening-${campaignId}"
+                rows="4"
+                oninput="b15RefreshCampaignState(${campaignId})"
+            >${escapeHtml(
+                selectedOpening
+            )}</textarea>
+        </label>
+
+        <div class="b14-toggle-row">
+            <label>
+                <input
+                    id="b14WebhookEnabled-${campaignId}"
+                    type="checkbox"
+                    ${config.webhook_enabled
+                        ? "checked"
+                        : ""}
+                >
+                Aktifkan webhook setelah endpoint
+                WABot dikonfigurasi
+            </label>
+        </div>
+
+        <div class="b14-action-row">
+            <button
+                type="button"
+                class="mini-button b14-save-button"
+                onclick="
+                    saveCampaignWABot(
+                        ${campaignId}
+                    )
+                "
+            >
+                Simpan Konfigurasi
+            </button>
+
+            <button
+                type="button"
+                class="mini-button"
+                onclick="
+                    copyB14Payload(
+                        ${campaignId}
+                    )
+                "
+            >
+                Copy Payload
+            </button>
+
+            <button
+                type="button"
+                class="mini-button"
+                onclick="b15GenerateOpening(${campaignId})"
+            >
+                Generate Tracking
+            </button>
+
+            <button
+                type="button"
+                class="mini-button"
+                onclick="
+                    copyB14Opening(
+                        ${campaignId}
+                    )
+                "
+            >
+                Copy Opening
+            </button>
+
+            <button
+                id="b15OpenWhatsApp-${campaignId}"
+                type="button"
+                class="mini-button b14-wa-button"
+                onclick="openB15WhatsApp(${campaignId})"
+            >
+                Buka WhatsApp
+            </button>
+        </div>
+
+        <div
+            id="b15Validation-${campaignId}"
+            class="b15-validation"
+        ></div>
+
+        <div
+            id="b14Message-${campaignId}"
+            class="b14-message"
+        ></div>
+
+        <div class="b14-summary-grid">
+            <div>
+                <span>Total Event</span>
+                <strong>
+                    ${Number(
+                        summary.total_events || 0
+                    )}
+                </strong>
+            </div>
+
+            <div>
+                <span>Lead</span>
+                <strong>
+                    ${Number(
+                        summary.counts?.lead || 0
+                    )}
+                </strong>
+            </div>
+
+            <div>
+                <span>Checkout</span>
+                <strong>
+                    ${Number(
+                        summary.counts?.checkout || 0
+                    )}
+                </strong>
+            </div>
+
+            <div>
+                <span>Closing</span>
+                <strong>
+                    ${Number(
+                        summary.counts?.closing || 0
+                    )}
+                </strong>
+            </div>
+        </div>
+
+        <div class="b14-content-grid">
+            <section class="b14-json-card">
+                <h5>WABot Payload Preview</h5>
+
+                <pre
+                    id="b14Payload-${campaignId}"
+                >${escapeHtml(
+                    b14FormatJson(payload)
+                )}</pre>
+            </section>
+
+            <section class="b14-events-card">
+                <h5>Attribution Events</h5>
+
+                ${renderB14Events(
+                    data.events
+                )}
+            </section>
+        </div>
+    `;
+
+    target.dataset.payload =
+        JSON.stringify(payload);
+
+    target.hidden = false;
+    queueMicrotask(() => {
+        b15RefreshCampaignState(
+            campaignId,
+            true
+        );
+    });
+}
+
+
+async function loadCampaignWABot(
+    campaignId
+) {
+    const target = document.getElementById(
+        `campaignWABotContent-${campaignId}`
+    );
+
+    if (!target) return;
+
+    target.hidden = false;
+    target.innerHTML = `
+        <div class="b14-loading">
+            Menyiapkan WABot payload...
+        </div>
+    `;
+
+    try {
+        const data = await api(
+            `/api/campaigns/${campaignId}/wabot`
+        );
+
+        try {
+            const catalogData = await api(
+                "/api/wabot/catalogs"
+            );
+            data.catalogs = catalogData.catalogs || [];
+            data.catalog_sync = catalogData;
+        } catch (catalogError) {
+            data.catalogs = [];
+            data.catalog_sync = {
+                ok: false,
+                message: catalogError.message,
+            };
+        }
+
+        renderCampaignWABot(
+            campaignId,
+            data
+        );
+
+    } catch (error) {
+        target.innerHTML = `
+            <div class="b14-error">
+                ${escapeHtml(error.message)}
+            </div>
+        `;
+    }
+}
+
+
+async function saveCampaignWABot(
+    campaignId
+) {
+    const message = document.getElementById(
+        `b14Message-${campaignId}`
+    );
+
+    if (message) {
+        message.textContent =
+            "Menyimpan konfigurasi...";
+    }
+
+    try {
+        b15RefreshCampaignState(
+            campaignId,
+            true
+        );
+
+        const data = await api(
+            `/api/campaigns/${campaignId}/wabot`,
+            {
+                method: "PUT",
+                headers: {
+                    "Content-Type":
+                        "application/json",
+                },
+                body: JSON.stringify({
+                    external_campaign_code:
+                        document.getElementById(
+                            `b14CampaignCode-${campaignId}`
+                        )?.value.trim()
+                        || null,
+
+                    catalog_code:
+                        document.getElementById(
+                            `b14CatalogCode-${campaignId}`
+                        )?.value.trim()
+                        || null,
+
+                    source_code:
+                        document.getElementById(
+                            `b14SourceCode-${campaignId}`
+                        )?.value.trim()
+                        || "spacecraft_ads",
+
+                    whatsapp_number:
+                        document.getElementById(
+                            `b14Phone-${campaignId}`
+                        )?.value.trim()
+                        || null,
+
+                    opening_message:
+                        document.getElementById(
+                            `b14Opening-${campaignId}`
+                        )?.value.trim()
+                        || null,
+
+                    webhook_enabled:
+                        Boolean(
+                            document.getElementById(
+                                `b14WebhookEnabled-${campaignId}`
+                            )?.checked
+                        ),
+
+                    metadata: {},
+                }),
+            }
+        );
+
+        if (message) {
+            message.textContent =
+                data.message;
+        }
+
+        await loadCampaignWABot(
+            campaignId
+        );
+
+    } catch (error) {
+        if (message) {
+            message.textContent =
+                `Gagal: ${error.message}`;
+        }
+    }
+}
+
+
+function copyB14Payload(
+    campaignId
+) {
+    const target = document.getElementById(
+        `campaignWABotContent-${campaignId}`
+    );
+
+    const payload =
+        target?.dataset.payload || "{}";
+
+    navigator.clipboard.writeText(
+        payload
+    ).then(() => {
+        const message =
+            document.getElementById(
+                `b14Message-${campaignId}`
+            );
+
+        if (message) {
+            message.textContent =
+                "Payload berhasil disalin.";
+        }
+    });
+}
+
+
+function copyB14Opening(
+    campaignId
+) {
+    const value =
+        document.getElementById(
+            `b14Opening-${campaignId}`
+        )?.value || "";
+
+    navigator.clipboard.writeText(
+        value
+    ).then(() => {
+        const message =
+            document.getElementById(
+                `b14Message-${campaignId}`
+            );
+
+        if (message) {
+            message.textContent =
+                "Opening message berhasil disalin.";
+        }
+    });
+}
+
+
+async function testWABotConnection(
+    campaignId
+) {
+    const message = document.getElementById(
+        `b14Message-${campaignId}`
+    );
+
+    if (message) {
+        message.textContent =
+            "Menguji koneksi WABot...";
+    }
+
+    try {
+        const data = await api(
+            "/api/wabot/test",
+            {
+                method: "POST",
+            }
+        );
+
+        if (message) {
+            message.textContent =
+                data.message;
+        }
+
+    } catch (error) {
+        if (message) {
+            message.textContent =
+                `Gagal: ${error.message}`;
+        }
+    }
+}
+
+
+function renderCampaignWABotToolbar(
+    campaign
+) {
+    return `
+        <section class="b14-wabot-panel">
+            <div class="b14-wabot-head">
+                <div>
+                    <span class="eyebrow">
+                        B15 CLICK-TO-WHATSAPP
+                    </span>
+
+                    <strong>
+                        Catalog Binding & Campaign Tracking
+                    </strong>
+
+                    <small>
+                        Pilih Catalog Bundle, buat opening
+                        message terukur, lalu gunakan link
+                        Click-to-WhatsApp pada Meta Ads.
+                    </small>
+                </div>
+
+                <div class="b14-toolbar-actions">
+                    <button
+                        type="button"
+                        class="mini-button b14-open-button"
+                        onclick="
+                            loadCampaignWABot(
+                                ${campaign.id}
+                            )
+                        "
+                    >
+                        Buka WABot
+                    </button>
+
+                    <button
+                        type="button"
+                        class="mini-button"
+                        onclick="
+                            loadCampaignWABot(
+                                ${campaign.id}
+                            )
+                        "
+                    >
+                        Refresh Catalog
+                    </button>
+                </div>
+            </div>
+
+            <div
+                id="campaignWABotContent-${campaign.id}"
+                class="b14-wabot-content"
+                hidden
+            ></div>
+        </section>
+    `;
+}
+
+
+
+
+// B17B LIVE FUNNEL DASHBOARD
+function b17DateLabel(value) {
+    if (!value) return "-";
+
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+        return String(value);
+    }
+
+    return new Intl.DateTimeFormat(
+        "id-ID",
+        {
+            dateStyle: "medium",
+            timeStyle: "short",
+        }
+    ).format(date);
+}
+
+
+function renderB17Metric(
+    label,
+    value,
+    helper = ""
+) {
+    return `
+        <div class="b17-metric">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value)}</strong>
+            ${helper
+                ? `<small>${escapeHtml(helper)}</small>`
+                : ""}
+        </div>
+    `;
+}
+
+
+function renderB17CreativeRow(row) {
+    return `
+        <tr>
+            <td>
+                <strong>${escapeHtml(
+                    row.creative_code || "MASTER"
+                )}</strong>
+                <small>${escapeHtml(
+                    row.campaign_code || "-"
+                )}</small>
+            </td>
+            <td>${escapeHtml(row.catalog_code || "-")}</td>
+            <td>${b12Number(row.whatsapp_clicks || 0)}</td>
+            <td>${b12Number(row.leads || 0)}</td>
+            <td>${b12Number(row.product_selected || 0)}</td>
+            <td>${b12Number(row.orders || 0)}</td>
+            <td>${b12Currency(row.order_value || 0)}</td>
+            <td>${b12Percent(row.lead_to_order_rate || 0)}</td>
+            <td>${escapeHtml(b17DateLabel(row.last_activity_at))}</td>
+        </tr>
+    `;
+}
+
+
+function renderB17Dashboard(
+    campaignId,
+    data
+) {
+    const target = document.getElementById(
+        `campaignFunnelContent-${campaignId}`
+    );
+
+    if (!target) return;
+
+    const spacecraft = data.spacecraft || {};
+    const summary = spacecraft.summary || {};
+    const rows = Array.isArray(spacecraft.campaigns)
+        ? spacecraft.campaigns
+        : [];
+    const period = spacecraft.period || {};
+
+    target.innerHTML = `
+        <div class="b17-summary-grid">
+            ${renderB17Metric(
+                "WhatsApp Click",
+                b12Number(summary.whatsapp_clicks || 0),
+                "Klik dari Ads Studio / go link"
+            )}
+            ${renderB17Metric(
+                "Lead",
+                b12Number(summary.leads || 0),
+                `${b12Percent(summary.click_to_lead_rate || 0)} click → lead`
+            )}
+            ${renderB17Metric(
+                "Pilih Produk",
+                b12Number(summary.product_selected || 0),
+                "Buyer memilih produk"
+            )}
+            ${renderB17Metric(
+                "Order",
+                b12Number(summary.orders || 0),
+                `${b12Percent(summary.lead_to_order_rate || 0)} lead → order`
+            )}
+            ${renderB17Metric(
+                "Nilai Order",
+                b12Currency(summary.order_value || 0),
+                "Termasuk QRIS manual"
+            )}
+            ${renderB17Metric(
+                "Creative",
+                b12Number(summary.creatives || rows.length),
+                `${b12Number(summary.campaigns || 0)} campaign`
+            )}
+        </div>
+
+        ${rows.length
+            ? `
+                <div class="b17-table-wrap">
+                    <table class="b17-table">
+                        <thead>
+                            <tr>
+                                <th>Creative / Campaign</th>
+                                <th>Catalog</th>
+                                <th>Click WA</th>
+                                <th>Lead</th>
+                                <th>Pilih Produk</th>
+                                <th>Order</th>
+                                <th>Nilai Order</th>
+                                <th>Lead → Order</th>
+                                <th>Aktivitas Terakhir</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows.map(renderB17CreativeRow).join("")}
+                        </tbody>
+                    </table>
+                </div>
+            `
+            : `
+                <div class="b17-empty">
+                    <strong>Belum ada attribution untuk campaign ini.</strong>
+                    <span>
+                        Data akan muncul setelah link WhatsApp campaign dipakai
+                        dan buyer masuk ke funnel WABot.
+                    </span>
+                </div>
+            `}
+
+        <div class="b17-footer">
+            <span>
+                Periode ${b12Number(period.days || 30)} hari
+            </span>
+            <span>
+                Source: SpaceCraft Funnel API
+            </span>
+        </div>
+    `;
+
+    target.hidden = false;
+}
+
+
+async function loadCampaignFunnelPerformance(
+    campaignId
+) {
+    const target = document.getElementById(
+        `campaignFunnelContent-${campaignId}`
+    );
+
+    const days = Number(
+        document.getElementById(
+            `campaignFunnelDays-${campaignId}`
+        )?.value || 30
+    );
+
+    if (!target) return;
+
+    target.hidden = false;
+    target.innerHTML = `
+        <div class="b17-loading">
+            Memuat live funnel dari SpaceCraft...
+        </div>
+    `;
+
+    try {
+        const data = await api(
+            `/api/campaigns/${campaignId}/wabot/performance?days=${days}`
+        );
+
+        renderB17Dashboard(
+            campaignId,
+            data
+        );
+
+    } catch (error) {
+        target.innerHTML = `
+            <div class="b17-error">
+                Gagal memuat live funnel:
+                ${escapeHtml(error.message)}
+            </div>
+        `;
+    }
+}
+
+
+function renderCampaignFunnelToolbar(
+    campaign
+) {
+    return `
+        <section class="b17-funnel-panel">
+            <div class="b17-funnel-head">
+                <div>
+                    <span class="eyebrow">
+                        B17 LIVE ADS → WABOT FUNNEL
+                    </span>
+                    <strong>
+                        Campaign & Creative Performance
+                    </strong>
+                    <small>
+                        Data aktual click WhatsApp, lead, pilihan produk,
+                        order, dan nilai order dari SpaceCraft.
+                    </small>
+                </div>
+
+                <div class="b17-funnel-actions">
+                    <select
+                        id="campaignFunnelDays-${campaign.id}"
+                        aria-label="Periode funnel"
+                    >
+                        <option value="7">7 hari</option>
+                        <option value="30" selected>30 hari</option>
+                        <option value="90">90 hari</option>
+                        <option value="365">365 hari</option>
+                    </select>
+
+                    <button
+                        type="button"
+                        class="mini-button b17-refresh-button"
+                        onclick="loadCampaignFunnelPerformance(${campaign.id})"
+                    >
+                        Buka Live Funnel
+                    </button>
+                </div>
+            </div>
+
+            <div
+                id="campaignFunnelContent-${campaign.id}"
+                class="b17-funnel-content"
+                hidden
+            ></div>
+        </section>
+    `;
+}
+
+
+function renderCampaignPerformanceToolbar(
+    campaign
+) {
+    return `
+        <section class="b12-performance-panel">
+            <div class="b12-performance-head">
+                <div>
+                    <span class="eyebrow">
+                        B12 CREATIVE PERFORMANCE
+                    </span>
+
+                    <strong>
+                        Performance Dashboard
+                    </strong>
+
+                    <small>
+                        Masukkan data Meta Ads untuk
+                        menentukan creative winner
+                        berdasarkan performa nyata.
+                    </small>
+                </div>
+
+                <div class="b12-performance-actions">
+                    <button
+                        type="button"
+                        class="mini-button"
+                        onclick="
+                            loadCampaignPerformance(
+                                ${campaign.id}
+                            )
+                        "
+                    >
+                        Buka Dashboard
+                    </button>
+
+                    <button
+                        type="button"
+                        class="mini-button"
+                        onclick="
+                            exportCampaignPerformance(
+                                ${campaign.id},
+                                'json'
+                            )
+                        "
+                    >
+                        Export JSON
+                    </button>
+
+                    <button
+                        type="button"
+                        class="mini-button b12-csv-button"
+                        onclick="
+                            exportCampaignPerformance(
+                                ${campaign.id},
+                                'csv'
+                            )
+                        "
+                    >
+                        Export CSV
+                    </button>
+                </div>
+            </div>
+
+            <div
+                id="campaignPerformanceContent-${campaign.id}"
+                class="b12-performance-content"
+                hidden
+            ></div>
+        </section>
+    `;
+}
+
+
+
+
+function renderCampaignExportToolbar(
+    campaign
+) {
+    return `
+        <section class="b11-export-panel">
+            <div class="b11-export-head">
+                <div>
+                    <span class="eyebrow">
+                        B11 AD COPY & EXPORT
+                    </span>
+
+                    <strong>
+                        Campaign Export Package
+                    </strong>
+
+                    <small>
+                        Generate ad copy dan ZIP dari
+                        video yang sudah Approved.
+                    </small>
+                </div>
+
+                <div class="b11-export-actions">
+                    <button
+                        type="button"
+                        class="mini-button"
+                        onclick="
+                            generateCampaignAdCopy(
+                                ${campaign.id}
+                            )
+                        "
+                    >
+                        Generate Ad Copy
+                    </button>
+
+                    <button
+                        type="button"
+                        class="mini-button b11-download-button"
+                        onclick="
+                            downloadCampaignPackage(
+                                ${campaign.id}
+                            )
+                        "
+                    >
+                        Download ZIP
+                    </button>
+                </div>
+            </div>
+
+            <div
+                id="campaignExportMessage-${campaign.id}"
+                class="b11-export-message"
+            ></div>
+
+            <div
+                id="campaignAdCopy-${campaign.id}"
+                class="b11-copy-panel"
+                hidden
+            ></div>
+        </section>
+    `;
+}
+
+
+
+
 function renderCampaignJobs(
     campaign
 ) {
     return `
+        ${renderCampaignWABotToolbar(
+            campaign
+        )}
+
+        ${renderCampaignFunnelToolbar(
+            campaign
+        )}
+
+        ${renderCampaignPerformanceToolbar(
+            campaign
+        )}
+
+        ${renderCampaignExportToolbar(
+            campaign
+        )}
+
         ${renderCampaignReviewToolbar(
             campaign
         )}
@@ -5049,7 +10174,7 @@ function renderCampaignJobs(
                 .map(
                     job => renderJobCard(
                         job,
-                        campaign.id
+                        campaign
                     )
                 )
                 .join("")}
@@ -5260,10 +10385,35 @@ async function deleteCampaign(campaignId, event = null) {
 
 function startCampaignPolling() {
     stopCampaignPolling();
-    campaignPollTimer = setInterval(() => {
-        if (state.activeProductId) loadCampaigns();
-        loadMultiProductCampaigns();
-    }, 5000);
+
+    const intervalMs =
+        state.activeProductId
+            ? 7000
+            : 20000;
+
+    campaignPollTimer = setInterval(
+        () => {
+            if (document.hidden) {
+                return;
+            }
+
+            if (state.activeProductId) {
+                Promise.resolve(
+                    loadCampaigns()
+                ).catch(() => {});
+            }
+
+            if (
+                !window.B18FCampaignHistory
+                && !window.B18BCampaignHistoryV3
+            ) {
+                Promise.resolve(
+                    loadMultiProductCampaigns()
+                ).catch(() => {});
+            }
+        },
+        intervalMs
+    );
 }
 
 function stopCampaignPolling() {
@@ -5274,6 +10424,8 @@ function stopCampaignPolling() {
 window.generateCampaign = generateCampaign;
 
 window.generateMultiProductCampaign = generateMultiProductCampaign;
+window.generateSingleProductCampaign = generateSingleProductCampaign;
+window.b19aSetPricingSource = b19aSetPricingSource;
 window.applyCreativeTemplate = applyCreativeTemplate;
 window.applyExportPreset = applyExportPreset;
 window.createAutomationRule = createAutomationRule;
@@ -5290,14 +10442,37 @@ window.previewSelectedMusic = previewSelectedMusic;
 window.uploadCatalogMusic = uploadCatalogMusic;
 window.deleteCatalogMusic = deleteCatalogMusic;
 window.selectVisibleCampaignProducts = selectVisibleCampaignProducts;
+window.renderB13VariantPreview = renderB13VariantPreview;
+window.updateB13VariantCount = updateB13VariantCount;
+window.clearB13VariantMatrix = clearB13VariantMatrix;
 window.moveCatalogProduct = moveCatalogProduct;
 window.renderCatalogPreflight = renderCatalogPreflight;
 
 window.viewCampaign = viewCampaign;
 window.retryCampaign = retryCampaign;
 window.deleteCampaign = deleteCampaign;
+window.setCampaignHistoryPage = setCampaignHistoryPage;
+window.setCampaignHistoryPageSize = setCampaignHistoryPageSize;
 window.saveRenderReview = saveRenderReview;
 window.filterCampaignResults = filterCampaignResults;
+window.generateCampaignAdCopy = generateCampaignAdCopy;
+window.downloadCampaignPackage = downloadCampaignPackage;
+window.copyB11Text = copyB11Text;
+window.loadCampaignWABot = loadCampaignWABot;
+window.saveCampaignWABot = saveCampaignWABot;
+window.copyB14Payload = copyB14Payload;
+window.copyB14Opening = copyB14Opening;
+window.testWABotConnection = testWABotConnection;
+window.b15RefreshCampaignState = b15RefreshCampaignState;
+window.b15ApplyCatalog = b15ApplyCatalog;
+window.b15GenerateOpening = b15GenerateOpening;
+window.openB15WhatsApp = openB15WhatsApp;
+window.b16TrackWhatsAppClick = b16TrackWhatsAppClick;
+window.loadCampaignFunnelPerformance = loadCampaignFunnelPerformance;
+window.loadCampaignPerformance = loadCampaignPerformance;
+window.savePerformanceEntry = savePerformanceEntry;
+window.deletePerformanceEntry = deletePerformanceEntry;
+window.exportCampaignPerformance = exportCampaignPerformance;
 
 
 
@@ -5828,10 +11003,38 @@ async function previewVoiceover() {
 }
 
 
+// B18F1_LEGACY_AI_COMPAT_START
+// Legacy AI-video UI telah dihapus, tetapi export lama masih dipanggil oleh app.js.
+// Stub berikut mencegah seluruh bundle berhenti sebelum fungsi Voice Draft diregistrasikan.
+async function loadAiVideoStatus() {
+    return {
+        ok: false,
+        configured: false,
+        disabled: true,
+        reason: "legacy_ai_video_removed",
+    };
+}
+function toggleAiVideoControls() {
+    return false;
+}
+// B18F1_LEGACY_AI_COMPAT_END
 window.loadVoiceOptions = loadVoiceOptions;
-window.loadAiVideoStatus = loadAiVideoStatus;
+window.loadAiVideoStatus =
+    typeof loadAiVideoStatus === "function"
+        ? loadAiVideoStatus
+        : async function () {
+            return {
+                ok: false,
+                configured: false,
+                disabled: true,
+            };
+        };
 window.toggleAiVideoControls =
-    toggleAiVideoControls;
+    typeof toggleAiVideoControls === "function"
+        ? toggleAiVideoControls
+        : function () {
+            return false;
+        };
 window.toggleVoiceoverControls =
     toggleVoiceoverControls;
 window.toggleCustomVoiceText =
@@ -5855,5 +11058,863 @@ updateCreativeTemplateBadge(
 );
 applyCreativeTemplate();
 
-loadMultiProductCampaigns();
+scheduleMultiCampaignHistoryRefresh();
 startCampaignPolling();
+
+// B18H_SMART_VOICE_TIMELINE_FIT_FRONTEND
+// B18G_APPROVED_VOICE_FRONTEND
+window.B18GApprovedVoiceAsset = null;
+
+// VOICE_DRAFT_APPROVAL_FRONTEND_V1
+(() => {
+    const draftState = {
+        approved: false,
+        approvedText: "",
+        approvedSignature: "",
+        protectedTerms: [],
+        estimatedDurationSeconds: null,
+        previewDurationSeconds: null,
+        maxDurationSeconds: null,
+        fitsTimeline: false,
+        previewSignature: "",
+        previewAssetId: "",
+        previewFingerprint: "",
+        previewAudioUrl: "",
+        approvedAssetId: "",
+        approvedFingerprint: "",
+        approvedDurationSeconds: null,
+        fitEligible: false,
+        fitRequiredSpeed: null,
+        fitOverBySeconds: null,
+        fitApplied: false,
+
+
+    };
+
+    const element = id =>
+        document.getElementById(id);
+
+    function draftProductIds() {
+        if (
+            typeof selectedCampaignProductClips
+            !== "function"
+        ) {
+            return [];
+        }
+
+        return selectedCampaignProductClips()
+            .map(item => Number(item.product_id))
+            .filter(Boolean);
+    }
+
+    function draftContextSignature(textValue = null) {
+        const text = textValue === null
+            ? (element("multiCampaignVoiceText")?.value || "").trim()
+            : String(textValue || "").trim();
+
+        return JSON.stringify({
+            product_ids: draftProductIds(),
+            audience:
+                element("multiCampaignAudience")?.value || "retail",
+            duration_seconds: Number(
+                element("multiCampaignDuration")?.value || 25
+            ),
+            promo_enabled: Boolean(
+                element("multiCampaignPromoEnabled")?.checked
+            ),
+            promo_min_amount: Number(
+                element("multiCampaignPromoMinAmount")?.value || 100000
+            ),
+            promo_discount_percent: Number(
+                element("multiCampaignPromoDiscount")?.value || 10
+            ),
+            promo_text:
+                element("multiCampaignPromoText")?.value.trim() || null,
+            voice_id:
+                element("multiCampaignVoiceId")?.value || "",
+            text,
+        });
+    }
+
+    function setDraftStatus(label, stateName) {
+        const status = element("multiVoiceDraftStatus");
+        if (!status) return;
+
+        status.textContent = label;
+        status.classList.remove(
+            "pending",
+            "previewed",
+            "approved"
+        );
+        status.classList.add(stateName || "pending");
+    }
+
+    function setDraftMessage(value) {
+        const target = element("multiVoiceDraftMessage");
+        if (target) target.textContent = value || "";
+    }
+
+    // B18D_DURATION_PREFLIGHT_FRONTEND
+    function currentVoiceLimit() {
+        const duration = Number(element("multiCampaignDuration")?.value || 25);
+        return Math.max(1, duration - 5.5);
+    }
+
+    function setDurationPanel({ actual = null, estimated = null, limit = null, fits = null, previewed = false } = {}) {
+        const actualTarget = element("multiVoiceDurationActual");
+        const limitTarget = element("multiVoiceDurationLimit");
+        const stateTarget = element("multiVoiceDurationState");
+        const effectiveLimit = Number(limit ?? currentVoiceLimit());
+        const displayValue = Number(actual ?? estimated);
+        if (actualTarget) actualTarget.textContent = Number.isFinite(displayValue) ? `${displayValue.toFixed(2)} detik` : "-";
+        if (limitTarget) limitTarget.textContent = `${effectiveLimit.toFixed(2)} detik`;
+        draftState.maxDurationSeconds = effectiveLimit;
+        draftState.estimatedDurationSeconds = Number.isFinite(Number(estimated)) ? Number(estimated) : null;
+        if (previewed) {
+            draftState.previewDurationSeconds = Number.isFinite(Number(actual)) ? Number(actual) : null;
+            draftState.fitsTimeline = Boolean(fits);
+        }
+        if (stateTarget) {
+            stateTarget.classList.remove("pending", "ok", "danger");
+            if (!previewed) {
+                stateTarget.textContent = Number.isFinite(displayValue) ? (fits === false ? "Estimasi terlalu panjang" : "Perlu preview aktual") : "Belum preview";
+                stateTarget.classList.add(fits === false ? "danger" : "pending");
+            } else if (fits) {
+                stateTarget.textContent = "Aman untuk render";
+                stateTarget.classList.add("ok");
+            } else {
+                stateTarget.textContent = "Terlalu panjang";
+                stateTarget.classList.add("danger");
+            }
+        }
+    }
+
+    function setVoiceFitAvailability({
+        eligible = false,
+        requiredSpeed = null,
+        overBy = null,
+        applied = false,
+    } = {}) {
+        const button = element("multiVoiceFitButton");
+
+        draftState.fitEligible = Boolean(eligible);
+        draftState.fitRequiredSpeed = Number.isFinite(Number(requiredSpeed))
+            ? Number(requiredSpeed)
+            : null;
+        draftState.fitOverBySeconds = Number.isFinite(Number(overBy))
+            ? Number(overBy)
+            : null;
+        draftState.fitApplied = Boolean(applied);
+
+        if (!button) return;
+
+        button.classList.toggle("hidden", !draftState.fitEligible);
+        button.disabled = !draftState.fitEligible;
+
+        if (draftState.fitEligible && draftState.fitRequiredSpeed) {
+            button.textContent =
+                `Sesuaikan ke Timeline (${draftState.fitRequiredSpeed.toFixed(2)}x)`;
+        } else {
+            button.textContent = "Sesuaikan ke Timeline";
+        }
+    }
+
+    function invalidateDraft(
+        message = "Draft berubah. Preview dan approve ulang sebelum render."
+    ) {
+        draftState.approved = false;
+        draftState.approvedText = "";
+        draftState.approvedSignature = "";
+        draftState.previewDurationSeconds = null;
+        draftState.fitsTimeline = false;
+        draftState.previewSignature = "";
+        draftState.previewAssetId = "";
+        draftState.previewFingerprint = "";
+        draftState.previewAudioUrl = "";
+        draftState.approvedAssetId = "";
+        draftState.approvedFingerprint = "";
+        draftState.approvedDurationSeconds = null;
+        window.B18GApprovedVoiceAsset = null;
+        setVoiceFitAvailability();
+        setDraftStatus("Belum disetujui", "pending");
+        setDraftMessage(message);
+        setDurationPanel({ limit: currentVoiceLimit() });
+    }
+
+    window.invalidateMultiVoiceDraft = invalidateDraft;
+
+    async function normalizeDraftText(text) {
+        return api(
+            "/api/voiceover/normalize",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    text,
+                    protected_terms:
+                        draftState.protectedTerms,
+                }),
+            }
+        );
+    }
+
+    async function requestMultiVoiceDraft(draftStyle = "standard") {
+        const button = element(draftStyle === "compact" ? "multiVoiceCompactButton" : "multiVoiceDraftGenerateButton");
+        const textarea = element("multiCampaignVoiceText");
+        const mode = element("multiCampaignVoiceMode");
+        const checkbox = element("multiCampaignVoiceoverEnabled");
+        if (!checkbox?.checked) { setDraftMessage("Aktifkan Voice Over terlebih dahulu."); return; }
+        const productIds = draftProductIds();
+        if (productIds.length < 5 || productIds.length > 6) { setDraftMessage("Pilih 5 sampai 6 produk sebelum membuat draft."); return; }
+        if (button) { button.disabled = true; button.textContent = draftStyle === "compact" ? "Meringkas..." : "Generating..."; }
+        setDraftMessage(draftStyle === "compact" ? "Membuat draft ringkas untuk slot voice-over..." : "Membuat draft TTS dengan nama produk yang dilindungi...");
+        try {
+            const data = await api("/api/voiceover/draft", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    product_ids: productIds,
+                    audience: element("multiCampaignAudience")?.value || "retail",
+                    duration_seconds: Number(element("multiCampaignDuration")?.value || 25),
+                    promo_enabled: Boolean(element("multiCampaignPromoEnabled")?.checked),
+                    promo_min_amount: Number(element("multiCampaignPromoMinAmount")?.value || 100000),
+                    promo_discount_percent: Number(element("multiCampaignPromoDiscount")?.value || 10),
+                    promo_text: element("multiCampaignPromoText")?.value.trim() || null,
+                    draft_style: draftStyle,
+                }),
+            });
+            draftState.protectedTerms = data.protected_terms || [];
+            if (textarea) textarea.value = data.tts_text || data.draft_text || "";
+            if (mode) mode.value = "custom";
+            const termsTarget = element("multiVoiceProtectedTerms");
+            if (termsTarget) termsTarget.textContent = draftState.protectedTerms.length ? "Nama/alias produk dikunci: " + draftState.protectedTerms.join(" • ") : "";
+            invalidateDraft(data.warning || `Draft siap direview. Estimasi ${data.estimated_seconds || "-"} detik.`);
+            setDurationPanel({ estimated: Number(data.estimated_seconds), limit: Number(data.max_voiceover_seconds), fits: Boolean(data.fits_timeline), previewed: false });
+            setDraftStatus("Draft siap", "previewed");
+        } catch (error) {
+            setDraftMessage(`Generate draft gagal: ${error.message}`);
+        } finally {
+            if (button) { button.disabled = false; button.textContent = draftStyle === "compact" ? "Ringkas Otomatis" : "Generate Draft"; }
+        }
+    }
+
+    window.generateMultiVoiceDraft = async function() { return requestMultiVoiceDraft("standard"); };
+    window.compactMultiVoiceDraft = async function() { return requestMultiVoiceDraft("compact"); };
+    window.extendMultiVoiceDuration = function() {
+        const select = element("multiCampaignDuration");
+        if (!select) return;
+        const current = Number(select.value || 25);
+        const next = current < 25 ? 25 : (current < 30 ? 30 : null);
+        if (next === null) { setDraftMessage("Durasi sudah 30 detik. Ringkas atau edit draft agar muat."); return; }
+        select.value = String(next);
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+        invalidateDraft(`Durasi diperpanjang menjadi ${next} detik. Preview ulang untuk mengukur durasi aktual.`);
+    };
+
+    window.previewMultiVoiceDraft = async function() {
+        const button = element("multiVoiceDraftPreviewButton");
+        const player = element("multiVoiceDraftPlayer");
+        const textarea = element("multiCampaignVoiceText");
+        const voiceId = element("multiCampaignVoiceId")?.value;
+        const rawText = textarea?.value.trim() || "";
+        if (!voiceId) {
+            setDraftMessage("Pilih voice ElevenLabs terlebih dahulu.");
+            return;
+        }
+        if (!rawText) {
+            setDraftMessage("Generate atau isi draft terlebih dahulu.");
+            return;
+        }
+        if (button) {
+            button.disabled = true;
+            button.textContent = "Generating...";
+        }
+        setDraftMessage("Membuat dan mengukur preview ElevenLabs...");
+        try {
+            const normalized = await normalizeDraftText(rawText);
+            const normalizedText = normalized.normalized_text || rawText;
+            if (textarea) textarea.value = normalizedText;
+            invalidateDraft("Preview dibuat. Sistem sedang memeriksa kecocokan timeline.");
+            const data = await api("/api/voiceover/preview", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    voice_id: voiceId,
+                    text: normalizedText,
+                    protected_terms: draftState.protectedTerms,
+                    target_duration_seconds: Number(
+                        element("multiCampaignDuration")?.value || 25
+                    ),
+                    closing_reserved_seconds: 5,
+                }),
+            });
+            draftState.previewAssetId = data.preview_asset_id || "";
+            draftState.previewFingerprint = data.fingerprint || "";
+            draftState.previewAudioUrl = data.audio_url || "";
+            if (!draftState.previewAssetId || !draftState.previewFingerprint) {
+                throw new Error("Preview asset tidak lengkap");
+            }
+            if (player) {
+                player.src = data.audio_url + `?t=${Date.now()}`;
+                player.classList.remove("hidden");
+                try { await player.play(); } catch (_) {}
+            }
+            draftState.previewSignature = draftContextSignature(normalizedText);
+            const actual = Number(data.actual_duration_seconds);
+            const limit = Number(data.max_voiceover_seconds);
+            const fits = Boolean(data.fits_timeline);
+            const overBy = Math.max(0, actual - limit);
+            const requiredSpeed = limit > 0 ? actual / limit : Infinity;
+            const fitEligible = Boolean(
+                !fits
+                && overBy <= 1.20 + 0.001
+                && requiredSpeed <= 1.06 + 0.001
+            );
+            setVoiceFitAvailability({
+                eligible: fitEligible,
+                requiredSpeed,
+                overBy,
+            });
+            setDurationPanel({
+                actual,
+                limit,
+                fits,
+                previewed: true,
+            });
+            if (fits) {
+                setDraftStatus("Preview aman", "previewed");
+                setDraftMessage(
+                    `Preview ${actual.toFixed(2)} detik aman. `
+                    + "Dengarkan, lalu approve sebagai master audio render."
+                );
+            } else if (fitEligible) {
+                setDraftStatus("Bisa disesuaikan", "previewed");
+                setDraftMessage(
+                    `Voice-over lebih panjang ${overBy.toFixed(2)} detik. `
+                    + `Auto Fit membutuhkan sekitar ${requiredSpeed.toFixed(2)}x. `
+                    + "Klik Sesuaikan ke Timeline, dengarkan ulang, lalu approve."
+                );
+            } else {
+                setDraftStatus("Terlalu panjang", "pending");
+                setDraftMessage(
+                    data.warning || "Voice-over terlalu panjang. Ringkas atau perpanjang durasi."
+                );
+            }
+        } catch (error) {
+            invalidateDraft(`Preview gagal: ${error.message}`);
+        } finally {
+            if (button) {
+                button.disabled = false;
+                button.textContent = "Preview Voice";
+            }
+        }
+    };
+
+    window.fitMultiVoiceToTimeline = async function() {
+        const button = element("multiVoiceFitButton");
+        const player = element("multiVoiceDraftPlayer");
+        const textarea = element("multiCampaignVoiceText");
+        const voiceId = element("multiCampaignVoiceId")?.value;
+        const text = textarea?.value.trim() || "";
+
+        if (!draftState.fitEligible) {
+            setDraftMessage(
+                "Auto Fit hanya tersedia untuk kelebihan ringan maksimal 1,2 detik dan 1,06x."
+            );
+            return;
+        }
+        if (!draftState.previewAssetId || !draftState.previewFingerprint) {
+            setDraftMessage("Preview terbaru tidak tersedia. Buat preview ulang.");
+            return;
+        }
+        if (!voiceId || !text) {
+            setDraftMessage("Voice atau draft belum lengkap.");
+            return;
+        }
+
+        if (button) {
+            button.disabled = true;
+            button.textContent = "Menyesuaikan...";
+        }
+        setDraftMessage("Memangkas silence dan menyesuaikan tempo secara ringan...");
+
+        try {
+            const data = await api("/api/voiceover/fit", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    preview_asset_id: draftState.previewAssetId,
+                    voice_id: voiceId,
+                    text,
+                    protected_terms: draftState.protectedTerms,
+                    target_duration_seconds: Number(
+                        element("multiCampaignDuration")?.value || 25
+                    ),
+                    closing_reserved_seconds: 5,
+                }),
+            });
+
+            if (!data.fits_timeline) {
+                throw new Error("Hasil Auto Fit masih melebihi timeline");
+            }
+
+            draftState.previewAssetId = data.preview_asset_id || "";
+            draftState.previewFingerprint = data.fingerprint || "";
+            draftState.previewAudioUrl = data.audio_url || "";
+            draftState.previewDurationSeconds = Number(data.actual_duration_seconds);
+            draftState.fitsTimeline = true;
+            draftState.previewSignature = draftContextSignature(text);
+
+            if (!draftState.previewAssetId || !draftState.previewFingerprint) {
+                throw new Error("Asset hasil Auto Fit tidak lengkap");
+            }
+
+            if (player) {
+                player.src = data.audio_url + `?t=${Date.now()}`;
+                player.classList.remove("hidden");
+                try { await player.play(); } catch (_) {}
+            }
+
+            setDurationPanel({
+                actual: Number(data.actual_duration_seconds),
+                limit: Number(data.max_voiceover_seconds),
+                fits: true,
+                previewed: true,
+            });
+            setVoiceFitAvailability({ applied: true });
+            setDraftStatus("Sudah disesuaikan", "previewed");
+            setDraftMessage(
+                `Auto Fit selesai: ${Number(data.actual_duration_seconds).toFixed(2)} detik. `
+                + `Silence dipangkas ${Number(data.trimmed_seconds || 0).toFixed(2)} detik, `
+                + `tempo ${Number(data.speed_multiplier || 1).toFixed(2)}x. `
+                + "Dengarkan hasilnya, lalu Approve Draft."
+            );
+        } catch (error) {
+            setDraftStatus("Auto Fit gagal", "pending");
+            setDraftMessage(`Auto Fit gagal: ${error.message}`);
+        } finally {
+            if (button) {
+                button.disabled = !draftState.fitEligible;
+                button.textContent = "Sesuaikan ke Timeline";
+            }
+        }
+    };
+
+    window.approveMultiVoiceDraft = async function() {
+        const button = element("multiVoiceDraftApproveButton");
+        const textarea = element("multiCampaignVoiceText");
+        const voiceId = element("multiCampaignVoiceId")?.value;
+        const rawText = textarea?.value.trim() || "";
+        if (!rawText) {
+            setDraftMessage("Draft masih kosong.");
+            return;
+        }
+        if (!voiceId) {
+            setDraftMessage("Pilih voice ElevenLabs terlebih dahulu.");
+            return;
+        }
+        const currentSignature = draftContextSignature(rawText);
+        if (
+            !draftState.previewDurationSeconds
+            || draftState.previewSignature !== currentSignature
+            || !draftState.previewAssetId
+            || !draftState.previewFingerprint
+        ) {
+            setDraftMessage("Preview voice terbaru wajib dibuat sebelum approve.");
+            setDraftStatus("Belum dipreview", "pending");
+            return;
+        }
+        if (!draftState.fitsTimeline) {
+            setDraftMessage("Draft belum dapat di-approve karena durasi voice-over melebihi slot.");
+            setDraftStatus("Terlalu panjang", "pending");
+            return;
+        }
+        if (button) button.disabled = true;
+        try {
+            const normalized = await normalizeDraftText(rawText);
+            const approvedText = normalized.normalized_text || rawText;
+            if (textarea) textarea.value = approvedText;
+            const approvedSignature = draftContextSignature(approvedText);
+            if (approvedSignature !== draftState.previewSignature) {
+                invalidateDraft("Normalisasi mengubah teks. Preview ulang sebelum approve.");
+                return;
+            }
+            const data = await api("/api/voiceover/approve", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    preview_asset_id: draftState.previewAssetId,
+                    fingerprint: draftState.previewFingerprint,
+                    voice_id: voiceId,
+                    text: approvedText,
+                    protected_terms: draftState.protectedTerms,
+                }),
+            });
+            draftState.approved = true;
+            draftState.approvedText = data.normalized_text || approvedText;
+            draftState.approvedSignature = draftContextSignature(draftState.approvedText);
+            draftState.approvedAssetId = data.approved_asset_id || "";
+            draftState.approvedFingerprint = data.fingerprint || "";
+            draftState.approvedDurationSeconds = Number(data.duration_seconds);
+            if (
+                !draftState.approvedAssetId
+                || !draftState.approvedFingerprint
+                || !Number.isFinite(draftState.approvedDurationSeconds)
+            ) {
+                throw new Error("Approved voice master tidak lengkap");
+            }
+            window.B18GApprovedVoiceAsset = {
+                asset_id: draftState.approvedAssetId,
+                fingerprint: draftState.approvedFingerprint,
+                duration_seconds: draftState.approvedDurationSeconds,
+                audio_url: data.audio_url || "",
+                voice_id: voiceId,
+                signature: draftState.approvedSignature,
+            };
+            setDraftStatus("Approved master", "approved");
+            setDraftMessage(
+                `Master audio disetujui (${draftState.approvedDurationSeconds.toFixed(2)} detik). `
+                + "Render akan memakai file ini tanpa generate ElevenLabs ulang."
+            );
+        } catch (error) {
+            invalidateDraft(`Approve gagal: ${error.message}`);
+        } finally {
+            if (button) button.disabled = false;
+        }
+    };
+
+    function draftReadyForRender() {
+        const approvedAsset = window.B18GApprovedVoiceAsset;
+        return Boolean(
+            draftState.approved
+            && draftState.approvedText
+            && draftState.fitsTimeline
+            && draftState.previewDurationSeconds
+            && draftState.approvedAssetId
+            && draftState.approvedFingerprint
+            && Number.isFinite(draftState.approvedDurationSeconds)
+            && draftState.previewSignature === draftContextSignature(draftState.approvedText)
+            && draftState.approvedSignature === draftContextSignature(draftState.approvedText)
+            && approvedAsset
+            && approvedAsset.asset_id === draftState.approvedAssetId
+            && approvedAsset.fingerprint === draftState.approvedFingerprint
+            && approvedAsset.signature === draftState.approvedSignature
+        );
+    }
+
+    function prepareDraftForRender(messageTarget) {
+        const voiceEnabled = Boolean(
+            element("multiCampaignVoiceoverEnabled")?.checked
+            && voiceoverConfigured
+        );
+
+        if (!voiceEnabled) return true;
+
+        if (!element("multiCampaignVoiceId")?.value) {
+            if (messageTarget) {
+                messageTarget.textContent =
+                    "Pilih voice ElevenLabs terlebih dahulu.";
+            }
+            return false;
+        }
+
+        if (!draftReadyForRender()) {
+            if (messageTarget) {
+                messageTarget.textContent =
+                    "Voice-over belum siap. Preview harus muat dalam slot timeline, lalu klik Approve Draft.";
+            }
+            setDraftStatus("Belum disetujui", "pending");
+            return false;
+        }
+
+        const mode = element("multiCampaignVoiceMode");
+        const textarea = element("multiCampaignVoiceText");
+        if (mode) mode.value = "custom";
+        if (textarea) textarea.value =
+            draftState.approvedText;
+
+        return true;
+    }
+
+    const originalToggleVoice =
+        window.toggleMultiVoiceoverControls;
+
+    window.toggleMultiVoiceoverControls = function(...args) {
+        if (typeof originalToggleVoice === "function") {
+            originalToggleVoice.apply(this, args);
+        }
+
+        const enabled = Boolean(
+            element("multiCampaignVoiceoverEnabled")?.checked
+            && voiceoverConfigured
+        );
+        const mode = element("multiCampaignVoiceMode");
+        const wrap = element("multiCustomVoiceTextWrap");
+
+        if (mode) {
+            mode.value = "custom";
+            mode.disabled = true;
+        }
+        if (wrap) wrap.classList.toggle("hidden", !enabled);
+
+        if (!enabled) {
+            invalidateDraft(
+                "Aktifkan Voice Over untuk membuat draft."
+            );
+        }
+    };
+
+    window.toggleMultiCustomVoiceText = function() {
+        const enabled = Boolean(
+            element("multiCampaignVoiceoverEnabled")?.checked
+            && voiceoverConfigured
+        );
+        const mode = element("multiCampaignVoiceMode");
+        const wrap = element("multiCustomVoiceTextWrap");
+
+        if (mode) {
+            mode.value = "custom";
+            mode.disabled = true;
+        }
+        if (wrap) wrap.classList.toggle("hidden", !enabled);
+    };
+
+    const originalGenerateCampaign =
+        window.generateMultiProductCampaign;
+
+    window.generateMultiProductCampaign = async function(...args) {
+        if (!prepareDraftForRender(multiCampaignMessage)) {
+            return;
+        }
+        return originalGenerateCampaign.apply(this, args);
+    };
+
+    if (
+        typeof generateMultiProductCampaign === "function"
+        && generateMultiCampaignButton
+    ) {
+        generateMultiCampaignButton.removeEventListener(
+            "click",
+            generateMultiProductCampaign
+        );
+        generateMultiCampaignButton.addEventListener(
+            "click",
+            window.generateMultiProductCampaign
+        );
+    }
+
+    const originalCreateAutomation =
+        window.createAutomationRule;
+
+    if (typeof originalCreateAutomation === "function") {
+        window.createAutomationRule = async function(...args) {
+            const target = element("automationMessage");
+            if (!prepareDraftForRender(target)) {
+                return;
+            }
+            return originalCreateAutomation.apply(this, args);
+        };
+    }
+
+    [
+        "multiCampaignAudience",
+        "multiCampaignDuration",
+        "multiCampaignPromoEnabled",
+        "multiCampaignPromoMinAmount",
+        "multiCampaignPromoDiscount",
+        "multiCampaignPromoText",
+    ].forEach(id => {
+        element(id)?.addEventListener(
+            "change",
+            () => invalidateDraft()
+        );
+    });
+})();
+
+// VOICE_DRAFT_UI_FIX_V3
+(() => {
+    const byId = id => document.getElementById(id);
+
+    function draftPanelEnabled() {
+        return Boolean(
+            byId("multiCampaignVoiceoverEnabled")?.checked
+        );
+    }
+
+    function syncDraftPanel() {
+        const enabled = draftPanelEnabled();
+        const controls = byId("multiVoiceoverControls");
+        const wrap = byId("multiCustomVoiceTextWrap");
+        const mode = byId("multiCampaignVoiceMode");
+        const textarea = byId("multiCampaignVoiceText");
+
+        if (mode) {
+            mode.value = "custom";
+            mode.disabled = true;
+        }
+
+        if (controls) {
+            controls.classList.toggle(
+                "voiceover-disabled",
+                !enabled
+            );
+        }
+
+        if (wrap) {
+            wrap.classList.toggle("hidden", !enabled);
+            wrap.setAttribute(
+                "aria-hidden",
+                enabled ? "false" : "true"
+            );
+        }
+
+        if (textarea) {
+            textarea.disabled = !enabled;
+        }
+
+        [
+            "multiVoiceDraftGenerateButton",
+            "multiVoiceDraftPreviewButton",
+            "multiVoiceDraftApproveButton",
+        ].forEach(id => {
+            const button = byId(id);
+            if (button) button.disabled = !enabled;
+        });
+    }
+
+    function draftIsApproved() {
+        const status = byId("multiVoiceDraftStatus");
+        const text = (
+            byId("multiCampaignVoiceText")?.value || ""
+        ).trim();
+
+        return Boolean(
+            text
+            && status?.classList.contains("approved")
+        );
+    }
+
+    function showDraftRequiredMessage() {
+        const message = byId("multiCampaignMessage");
+        const draftMessage = byId(
+            "multiVoiceDraftMessage"
+        );
+        const wrap = byId("multiCustomVoiceTextWrap");
+        const value = (
+            "Voice-over belum disetujui. "
+            + "Generate Draft, Preview Voice, lalu Approve Draft sebelum render."
+        );
+
+        if (message) message.textContent = value;
+        if (draftMessage) draftMessage.textContent = value;
+
+        wrap?.classList.remove("hidden");
+        wrap?.scrollIntoView({
+            behavior: "smooth",
+            block: "center",
+        });
+    }
+
+    function bindDraftUi() {
+        const checkbox = byId(
+            "multiCampaignVoiceoverEnabled"
+        );
+        const voiceSelect = byId(
+            "multiCampaignVoiceId"
+        );
+        const generateButton = byId(
+            "generateMultiCampaignButton"
+        );
+
+        if (
+            checkbox
+            && checkbox.dataset.b18aUiFixBound !== "1"
+        ) {
+            checkbox.dataset.b18aUiFixBound = "1";
+            checkbox.addEventListener(
+                "change",
+                () => setTimeout(syncDraftPanel, 0)
+            );
+        }
+
+        if (
+            voiceSelect
+            && voiceSelect.dataset.b18aUiFixBound !== "1"
+        ) {
+            voiceSelect.dataset.b18aUiFixBound = "1";
+            voiceSelect.addEventListener(
+                "change",
+                () => setTimeout(syncDraftPanel, 0)
+            );
+        }
+
+        [
+            "multiCampaignTemplate",
+            "multiCampaignAudience",
+            "multiCampaignDuration",
+            "multiCampaignPromoEnabled",
+            "multiCampaignPromoMinAmount",
+            "multiCampaignPromoDiscount",
+            "multiCampaignPromoText",
+        ].forEach(id => {
+            const target = byId(id);
+            if (
+                target
+                && target.dataset.b18aUiFixBound !== "1"
+            ) {
+                target.dataset.b18aUiFixBound = "1";
+                target.addEventListener(
+                    "change",
+                    () => setTimeout(syncDraftPanel, 0)
+                );
+            }
+        });
+
+        if (
+            generateButton
+            && generateButton.dataset.b18aDraftGuard !== "1"
+        ) {
+            generateButton.dataset.b18aDraftGuard = "1";
+
+            // Capture phase: hentikan handler render lama sebelum
+            // campaign dibuat ketika draft belum approved.
+            generateButton.addEventListener(
+                "click",
+                event => {
+                    syncDraftPanel();
+
+                    if (!draftPanelEnabled()) return;
+
+                    if (!draftIsApproved()) {
+                        event.preventDefault();
+                        event.stopImmediatePropagation();
+                        showDraftRequiredMessage();
+                    }
+                },
+                true
+            );
+        }
+
+        syncDraftPanel();
+    }
+
+    window.syncB18AVoiceDraftPanel = syncDraftPanel;
+
+    if (document.readyState === "loading") {
+        document.addEventListener(
+            "DOMContentLoaded",
+            bindDraftUi,
+            {once: true}
+        );
+    } else {
+        bindDraftUi();
+    }
+
+    // Voice list dan template di-load async. Sinkronkan ulang
+    // sesudah proses awal selesai.
+    setTimeout(bindDraftUi, 250);
+    setTimeout(syncDraftPanel, 1000);
+    setTimeout(syncDraftPanel, 2500);
+})();
