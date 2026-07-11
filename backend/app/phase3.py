@@ -14299,32 +14299,45 @@ def content_image_prompt(
 
     prompt = f"""
 Use the uploaded image as the exact product reference for {product_name}.
-Create a premium product advertisement image for SpaceCraft.
+Create a lively premium commercial product advertisement image for SpaceCraft,
+not a flat studio cutout and not a simple product pasted on a background.
 Product type: {type_description}.
-Scene direction: {scene_description}.
+Primary scene direction: {scene_description}.
 Aspect ratio target: {aspect_ratio}.
 
-Product lock rule: preserve the exact product identity, shape, colors, facial
-details, proportions, arrangement, material texture, and functional parts from
-the uploaded image. The product itself must not be redesigned, replaced,
-duplicated, deformed, simplified, recolored, or turned into a different object.
-Only improve the scene, surface, lighting, shadows, camera angle, depth of
-field, and commercial atmosphere around the product.
+Creative priority: make the selected scene clearly visible and emotionally
+alive. Build a believable environment with real depth, foreground and background
+separation, soft contact shadows, warm highlights, natural reflections where
+appropriate, atmospheric lighting, realistic surface interaction, and a polished
+social ads composition. The product should feel photographed inside the scene,
+not inserted afterward.
 
-Keep the same number of products visible as the uploaded reference unless the
-user explicitly asks otherwise. Do not add extra products, extra characters,
-extra hands, extra fingers, logos, stickers, badges, QR codes, price labels,
-watermarks, UI elements, or crowded typography. Do not add any text unless the
-user explicitly asks for specific text in the extra direction. If text is
-requested, use only the exact requested text and keep it clean, readable, and
-limited.
+Product identity lock: preserve the exact product identity, shape, colors,
+facial details, proportions, material texture, functional parts, and number of
+products from the uploaded image. Do not redesign, replace, duplicate, deform,
+simplify, recolor, melt, bend, or turn the product into a different object.
+You may improve framing, crop, camera angle, depth of field, lighting, and the
+surrounding environment so the final image looks like a professional ad.
 
-Make the final image bright, premium, cute, playful, modern, clean, high detail,
-photorealistic, and ready for Instagram Reels, TikTok, WhatsApp, and Meta Ads.
+Keep the same product count and the same product relationship from the uploaded
+reference unless the user explicitly asks otherwise. Do not add unrelated extra
+products, extra characters, extra hands, extra fingers, logos, stickers, badges,
+QR codes, price labels, watermarks, UI elements, or crowded typography. Do not
+add any text unless the user explicitly asks for specific text in the extra
+direction. If text is requested, use only the exact requested text and keep it
+clean, readable, and limited.
+
+Style target: bright, premium, cute, playful, modern, clean, high detail,
+photorealistic lifestyle-commercial image, suitable for Instagram Reels,
+TikTok, WhatsApp, and Meta Ads.
 """
 
     if custom_prompt.strip():
-        prompt += "\nExtra direction from user:\n" + custom_prompt.strip()
+        prompt += (
+            "\nExtra direction from user, treat this as the main creative brief "
+            "as long as it does not conflict with the product identity lock:\n"
+            + custom_prompt.strip()
+        )
 
     return " ".join(prompt.split())
 
@@ -14416,15 +14429,15 @@ def build_product_preserve_mask(raw_image: bytes) -> bytes:
         (zone_left, zone_top, zone_right, zone_bottom),
     )
     subject = ImageChops.multiply(subject, product_zone)
-    subject = subject.filter(ImageFilter.MaxFilter(19))
-    subject = subject.filter(ImageFilter.GaussianBlur(5))
+    subject = subject.filter(ImageFilter.MaxFilter(13))
+    subject = subject.filter(ImageFilter.GaussianBlur(3))
     subject = subject.point(lambda value: 255 if value > 20 else 0, mode="L")
     subject = subject.resize(
         (width, height),
         Image.Resampling.LANCZOS,
     )
-    subject = subject.filter(ImageFilter.MaxFilter(31))
-    subject = subject.filter(ImageFilter.GaussianBlur(7))
+    subject = subject.filter(ImageFilter.MaxFilter(17))
+    subject = subject.filter(ImageFilter.GaussianBlur(3))
 
     # OpenAI edit masks use transparent pixels as editable areas. Keep the
     # detected product area opaque so the model changes the scene, not the
