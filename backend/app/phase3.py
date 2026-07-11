@@ -11444,9 +11444,11 @@ def overlay_raw_catalog_video(
     catalog_box_y = int(height * safe_area.get("closing_box_y", 0.74))
     catalog_box_w = int(width * 0.880)
     catalog_box_h = int(height * 0.245)
+    # Keep the opening hook punchy. The previous 34% rule made
+    # a 30-second catalog video hold the hook for about 10 seconds.
     hook_end = min(
         float(duration),
-        max(2.8, duration * 0.34),
+        3.6,
     )
 
     raw_clips = config.get("raw_clips") or []
