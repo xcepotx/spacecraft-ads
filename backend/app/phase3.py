@@ -10849,6 +10849,13 @@ def raw_catalog_closing_duration(
     return round(min(5.0, max(3.5, duration * 0.22)), 3)
 
 
+def raw_catalog_hook_duration(
+    duration_seconds: int | float,
+) -> float:
+    duration = max(1.0, float(duration_seconds or 0))
+    return round(min(duration, 3.6), 3)
+
+
 def raw_catalog_visual_product_name(value: str) -> str:
     original = re.sub(r"\s+", " ", str(value or "Produk").strip())
     if len(original) <= 28:
@@ -11446,10 +11453,7 @@ def overlay_raw_catalog_video(
     catalog_box_h = int(height * 0.245)
     # Keep the opening hook punchy. The previous 34% rule made
     # a 30-second catalog video hold the hook for about 10 seconds.
-    hook_end = min(
-        float(duration),
-        3.6,
-    )
+    hook_end = raw_catalog_hook_duration(duration)
 
     raw_clips = config.get("raw_clips") or []
     product_items: list[dict[str, str]] = []
@@ -11504,8 +11508,18 @@ def overlay_raw_catalog_video(
         float(duration) - closing_duration,
     )
 
+    product_timeline_start = min(
+        hook_end,
+        max(0.0, final_start - 1.0),
+    )
+
+    product_timeline_duration = max(
+        0.25,
+        final_start - product_timeline_start,
+    )
+
     segment_duration = (
-        final_start / max(1, len(product_names))
+        product_timeline_duration / max(1, len(product_names))
     )
 
     files = {
@@ -11651,7 +11665,9 @@ def overlay_raw_catalog_video(
 
     filter_parts = [
         (
-            f"tpad=stop_mode=clone:"
+            "tpad=start_mode=clone:"
+            f"start_duration={product_timeline_start:.3f}:"
+            "stop_mode=clone:"
             f"stop_duration={closing_duration:.3f},"
             f"trim=duration={float(duration):.3f},"
             "setpts=PTS-STARTPTS,"
@@ -11679,9 +11695,9 @@ def overlay_raw_catalog_video(
     ]
 
     for index, product_file in enumerate(product_files):
-        start = index * segment_duration
+        start = product_timeline_start + index * segment_duration
         end = min(
-            (index + 1) * segment_duration,
+            product_timeline_start + (index + 1) * segment_duration,
             final_start,
         )
 
@@ -12243,9 +12259,11 @@ def render_raw_catalog_video(
         duration
     )
 
+    hook_duration = raw_catalog_hook_duration(duration)
+
     product_duration = max(
         1.0,
-        float(duration) - closing_duration,
+        float(duration) - closing_duration - hook_duration,
     )
 
     transition_duration = min(
