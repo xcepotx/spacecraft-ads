@@ -14299,43 +14299,44 @@ def content_image_prompt(
 
     prompt = f"""
 Use the uploaded image as the exact product reference for {product_name}.
-Create a lively premium commercial product advertisement image for SpaceCraft,
-not a flat studio cutout and not a simple product pasted on a background.
+This is a product-preserving scene edit, not a product redesign.
 Product type: {type_description}.
 Primary scene direction: {scene_description}.
 Aspect ratio target: {aspect_ratio}.
 
-Creative priority: make the selected scene clearly visible and emotionally
-alive. Build a believable environment with real depth, foreground and background
-separation, soft contact shadows, warm highlights, natural reflections where
-appropriate, atmospheric lighting, realistic surface interaction, and a polished
-social ads composition. The product should feel photographed inside the scene,
-not inserted afterward.
+Absolute product lock: keep the actual uploaded product area visually the same.
+Preserve the exact product identity, silhouette, shape, colors, facial details,
+button/keychain parts, proportions, material texture, product count, orientation,
+relative spacing, and arrangement from the uploaded image. Do not redraw the
+product from imagination. Do not replace it with a cleaner, cuter, smoother,
+more symmetrical, different, or newly generated version. Do not duplicate,
+remove, deform, simplify, recolor, melt, bend, rotate, or change the product.
 
-Product identity lock: preserve the exact product identity, shape, colors,
-facial details, proportions, material texture, functional parts, and number of
-products from the uploaded image. Do not redesign, replace, duplicate, deform,
-simplify, recolor, melt, bend, or turn the product into a different object.
-You may improve framing, crop, camera angle, depth of field, lighting, and the
-surrounding environment so the final image looks like a professional ad.
+Scene task: improve only the surrounding scene, surface, lighting, shadows,
+background atmosphere, depth of field, and commercial presentation around the
+locked product. Make the selected scene feel alive and premium with realistic
+contact shadows, natural highlights, believable surface interaction, and a
+polished social ads composition. The product must still look like the same item
+from the uploaded photo, just photographed in a better scene.
 
-Keep the same product count and the same product relationship from the uploaded
-reference unless the user explicitly asks otherwise. Do not add unrelated extra
-products, extra characters, extra hands, extra fingers, logos, stickers, badges,
-QR codes, price labels, watermarks, UI elements, or crowded typography. Do not
-add any text unless the user explicitly asks for specific text in the extra
-direction. If text is requested, use only the exact requested text and keep it
-clean, readable, and limited.
+Keep the same product count and relationship from the uploaded reference unless
+the user explicitly asks otherwise. Do not add unrelated extra products, extra
+characters, extra hands, extra fingers, logos, stickers, badges, QR codes, price
+labels, watermarks, UI elements, or crowded typography. Do not add any text
+unless the user explicitly asks for specific text in the extra direction. If
+text is requested, use only the exact requested text and keep it clean, readable,
+and limited.
 
-Style target: bright, premium, cute, playful, modern, clean, high detail,
-photorealistic lifestyle-commercial image, suitable for Instagram Reels,
-TikTok, WhatsApp, and Meta Ads.
+Style target: bright, premium, cute, playful, modern, clean, photorealistic
+lifestyle-commercial image, suitable for Instagram Reels, TikTok, WhatsApp, and
+Meta Ads, while preserving the uploaded product exactly.
 """
 
     if custom_prompt.strip():
         prompt += (
-            "\nExtra direction from user, treat this as the main creative brief "
-            "as long as it does not conflict with the product identity lock:\n"
+            "\nExtra direction from user. Follow it for the scene, mood, text, "
+            "and atmosphere only. If it conflicts with the absolute product "
+            "lock, the product lock wins:\n"
             + custom_prompt.strip()
         )
 
@@ -14429,15 +14430,15 @@ def build_product_preserve_mask(raw_image: bytes) -> bytes:
         (zone_left, zone_top, zone_right, zone_bottom),
     )
     subject = ImageChops.multiply(subject, product_zone)
-    subject = subject.filter(ImageFilter.MaxFilter(13))
-    subject = subject.filter(ImageFilter.GaussianBlur(3))
+    subject = subject.filter(ImageFilter.MaxFilter(19))
+    subject = subject.filter(ImageFilter.GaussianBlur(5))
     subject = subject.point(lambda value: 255 if value > 20 else 0, mode="L")
     subject = subject.resize(
         (width, height),
         Image.Resampling.LANCZOS,
     )
-    subject = subject.filter(ImageFilter.MaxFilter(17))
-    subject = subject.filter(ImageFilter.GaussianBlur(3))
+    subject = subject.filter(ImageFilter.MaxFilter(31))
+    subject = subject.filter(ImageFilter.GaussianBlur(7))
 
     # OpenAI edit masks use transparent pixels as editable areas. Keep the
     # detected product area opaque so the model changes the scene, not the
