@@ -28,6 +28,10 @@ const state = {
         hook: null,
         cta: null,
     },
+    singleProductVisualAssets: {
+        hook: null,
+        cta: null,
+    },
     musicLibrary: [],
     expandedCampaignIds: new Set(),
     campaignHistoryPage: 1,
@@ -2265,20 +2269,42 @@ async function loadSingleProductRawVideos(productId) {
             </option>
         `).join("");
 
+        function visualOption(slot) {
+            const asset = state.singleProductVisualAssets?.[slot];
+            if (!asset?.asset_id) return "";
+            return `
+                <option value="${escapeHtml(asset.asset_id)}">
+                    ${escapeHtml(asset.label || asset.original_name || "Uploaded visual")}
+                </option>
+            `;
+        }
+
         if (singleProductHookImageSelect) {
+            const current = singleProductHookImageSelect.value;
             singleProductHookImageSelect.innerHTML = `
                 <option value="">Auto generate jika kosong</option>
+                ${visualOption("hook")}
                 ${imageOptions}
             `;
-            singleProductHookImageSelect.disabled = !imageAssets.length;
+            if (current) singleProductHookImageSelect.value = current;
+            singleProductHookImageSelect.disabled = !(
+                imageAssets.length
+                || state.singleProductVisualAssets?.hook?.asset_id
+            );
         }
 
         if (singleProductCtaImageSelect) {
+            const current = singleProductCtaImageSelect.value;
             singleProductCtaImageSelect.innerHTML = `
                 <option value="">Auto generate jika kosong</option>
+                ${visualOption("cta")}
                 ${imageOptions}
             `;
-            singleProductCtaImageSelect.disabled = !imageAssets.length;
+            if (current) singleProductCtaImageSelect.value = current;
+            singleProductCtaImageSelect.disabled = !(
+                imageAssets.length
+                || state.singleProductVisualAssets?.cta?.asset_id
+            );
         }
     } catch (error) {
         singleProductRawVideoSelect.innerHTML = `
@@ -2333,17 +2359,6 @@ function updateSingleProductVisualStatus(slot, message, isError = false) {
 
 
 async function uploadSingleProductVisualAsset(slot) {
-    const productId = Number(singleProductSelect?.value || 0);
-
-    if (!productId) {
-        updateSingleProductVisualStatus(
-            slot,
-            "Pilih produk dulu.",
-            true
-        );
-        return;
-    }
-
     const elements = singleProductVisualElements(slot);
     const file = elements.file?.files?.[0];
 
@@ -2373,7 +2388,8 @@ async function uploadSingleProductVisualAsset(slot) {
     }
 
     const formData = new FormData();
-    formData.append("files", file);
+    formData.append("slot", elements.slot);
+    formData.append("file", file);
 
     if (elements.button) {
         elements.button.disabled = true;
@@ -2387,39 +2403,48 @@ async function uploadSingleProductVisualAsset(slot) {
 
     try {
         const data = await api(
-            `/api/products/${productId}/assets`,
+            "/api/campaign-visual-assets",
             {
                 method: "POST",
                 body: formData,
             }
         );
 
-        const created = Array.isArray(data.assets)
-            ? data.assets[0]
-            : null;
-        const createdClipId = created?.clip_id
-            || (
-                created?.id
-                    ? `asset-${created.id}`
-                    : ""
-            );
+        const created = data?.asset || null;
+        const createdAssetId = String(created?.asset_id || "").trim();
+
+        if (!createdAssetId) {
+            throw new Error("Upload berhasil tetapi asset_id kosong");
+        }
+
+        state.singleProductVisualAssets[elements.slot] = {
+            ...created,
+            label: `${elements.slot === "cta" ? "CTA" : "Hook"} upload - ${created.original_name || file.name}`,
+        };
 
         if (elements.file) {
             elements.file.value = "";
         }
 
-        clearRawVideoCache(productId);
-        await loadSingleProductRawVideos(productId);
-
-        if (createdClipId && elements.select) {
-            elements.select.value = createdClipId;
+        if (elements.select) {
+            const existing = Array.from(elements.select.options || [])
+                .some(option => option.value === createdAssetId);
+            if (!existing) {
+                const option = document.createElement("option");
+                option.value = createdAssetId;
+                option.textContent = state.singleProductVisualAssets[elements.slot].label;
+                elements.select.insertBefore(
+                    option,
+                    elements.select.options[1] || null
+                );
+            }
+            elements.select.disabled = false;
+            elements.select.value = createdAssetId;
         }
 
         updateSingleProductVisualStatus(
             slot,
-            createdClipId
-                ? "Image terupload dan sudah dipilih."
-                : "Image terupload. Pilih dari dropdown.",
+            `${elements.slot === "cta" ? "CTA" : "Hook"} image terupload dan dipakai sebagai visual khusus, bukan asset produk.`,
             false
         );
     } catch (error) {

@@ -12493,26 +12493,53 @@ def overlay_single_product_video(
         exist_ok=True,
     )
 
-    video_filter = ",".join([
+    has_custom_hook_visual = isinstance(
+        config.get("hook_visual_source"),
+        dict,
+    )
+    has_custom_cta_visual = isinstance(
+        config.get("cta_visual_source"),
+        dict,
+    )
+
+    filters = [
         f"scale={width}:{height}:force_original_aspect_ratio=increase",
         f"crop={width}:{height}",
         "setsar=1",
         "fps=30",
         "format=yuv420p",
-        "drawbox=x=iw*0.060:y=ih*0.075:w=iw*0.880:h=ih*0.185:color=black@0.36:t=fill:enable='between(t\\,0\\,5.8)'",
-        "drawbox=x=iw*0.060:y=ih*0.075:w=iw*0.880:h=5:color=0x9EF0BD@0.95:t=fill:enable='between(t\\,0\\,5.8)'",
-        "drawbox=x=iw*0.082:y=ih*0.098:w=iw*0.280:h=ih*0.034:color=0xFFD36A@0.95:t=fill:enable='between(t\\,0\\,5.8)'",
-        f"drawtext=fontfile='{FONT_FILE}':textfile='{files['badge']}':expansion=none:fontcolor=black:fontsize={badge_size}:x=w*0.105:y=h*0.104:enable='between(t\\,0\\,5.8)'",
-        f"drawtext=fontfile='{FONT_FILE}':textfile='{files['hook']}':expansion=none:fontcolor=white:bordercolor=black@0.68:borderw=2:fontsize={hook_size}:line_spacing=8:x=w*0.090:y=h*0.148:shadowcolor=black@0.70:shadowx=2:shadowy=2:enable='between(t\\,0\\,5.8)'",
-        f"drawbox=x=iw*0.070:y=ih*0.650:w=iw*0.860:h=ih*0.195:color=black@0.46:t=fill:enable='between(t\\,3.0\\,{duration:.3f})'",
-        f"drawbox=x=iw*0.070:y=ih*0.650:w=6:h=ih*0.195:color=0x9EF0BD@0.94:t=fill:enable='between(t\\,3.0\\,{duration:.3f})'",
-        f"drawtext=fontfile='{FONT_FILE}':textfile='{files['name']}':expansion=none:fontcolor=white:bordercolor=black@0.65:borderw=2:fontsize={name_size}:line_spacing=7:x=w*0.105:y=h*0.675:shadowcolor=black@0.70:shadowx=2:shadowy=2:enable='between(t\\,3.0\\,{duration:.3f})'",
-        f"drawtext=fontfile='{FONT_FILE}':textfile='{files['price']}':expansion=none:fontcolor=0xFFD36A:bordercolor=black@0.70:borderw=2:fontsize={price_size}:x=w*0.105:y=h*0.765:shadowcolor=black@0.74:shadowx=2:shadowy=2:enable='between(t\\,3.0\\,{duration:.3f})'",
-        f"drawbox=x=iw*0.060:y=ih*0.505:w=iw*0.880:h=ih*0.280:color=black@0.50:t=fill:enable='between(t\\,{final_start:.3f}\\,{duration:.3f})'",
-        f"drawbox=x=iw*0.060:y=ih*0.505:w=iw*0.880:h=5:color=0xFFD36A@0.95:t=fill:enable='between(t\\,{final_start:.3f}\\,{duration:.3f})'",
-        f"drawtext=fontfile='{FONT_FILE}':textfile='{files['cta']}':expansion=none:fontcolor=0x9EF0BD:bordercolor=black@0.70:borderw=2:fontsize={cta_size}:line_spacing=8:x=(w-text_w)/2:y=h*0.585:shadowcolor=black@0.72:shadowx=2:shadowy=2:enable='between(t\\,{final_start:.3f}\\,{duration:.3f})'",
-        f"drawtext=fontfile='{FONT_FILE}':textfile='{files['brand']}':expansion=none:fontcolor=white@0.82:bordercolor=black@0.55:borderw=1:fontsize={brand_size}:x=(w-text_w)/2:y=h*0.725:enable='between(t\\,{final_start:.3f}\\,{duration:.3f})'",
-    ])
+    ]
+
+    if not has_custom_hook_visual:
+        filters.extend([
+            "drawbox=x=iw*0.060:y=ih*0.075:w=iw*0.880:h=ih*0.185:color=black@0.36:t=fill:enable='between(t\,0\,5.8)'",
+            "drawbox=x=iw*0.060:y=ih*0.075:w=iw*0.880:h=5:color=0x9EF0BD@0.95:t=fill:enable='between(t\,0\,5.8)'",
+            "drawbox=x=iw*0.082:y=ih*0.098:w=iw*0.280:h=ih*0.034:color=0xFFD36A@0.95:t=fill:enable='between(t\,0\,5.8)'",
+            f"drawtext=fontfile='{FONT_FILE}':textfile='{files['badge']}':expansion=none:fontcolor=black:fontsize={badge_size}:x=w*0.105:y=h*0.104:enable='between(t\,0\,5.8)'",
+            f"drawtext=fontfile='{FONT_FILE}':textfile='{files['hook']}':expansion=none:fontcolor=white:bordercolor=black@0.68:borderw=2:fontsize={hook_size}:line_spacing=8:x=w*0.090:y=h*0.148:shadowcolor=black@0.70:shadowx=2:shadowy=2:enable='between(t\,0\,5.8)'",
+        ])
+
+    product_overlay_start = 5.8 if has_custom_hook_visual else 3.0
+    product_overlay_end = final_start if has_custom_cta_visual else float(duration)
+
+    if product_overlay_end - product_overlay_start >= 1.0:
+        filters.extend([
+            f"drawbox=x=iw*0.070:y=ih*0.650:w=iw*0.860:h=ih*0.195:color=black@0.46:t=fill:enable='between(t\,{product_overlay_start:.3f}\,{product_overlay_end:.3f})'",
+            f"drawbox=x=iw*0.070:y=ih*0.650:w=6:h=ih*0.195:color=0x9EF0BD@0.94:t=fill:enable='between(t\,{product_overlay_start:.3f}\,{product_overlay_end:.3f})'",
+            f"drawtext=fontfile='{FONT_FILE}':textfile='{files['name']}':expansion=none:fontcolor=white:bordercolor=black@0.65:borderw=2:fontsize={name_size}:line_spacing=7:x=w*0.105:y=h*0.675:shadowcolor=black@0.70:shadowx=2:shadowy=2:enable='between(t\,{product_overlay_start:.3f}\,{product_overlay_end:.3f})'",
+            f"drawtext=fontfile='{FONT_FILE}':textfile='{files['price']}':expansion=none:fontcolor=0xFFD36A:bordercolor=black@0.70:borderw=2:fontsize={price_size}:x=w*0.105:y=h*0.765:shadowcolor=black@0.74:shadowx=2:shadowy=2:enable='between(t\,{product_overlay_start:.3f}\,{product_overlay_end:.3f})'",
+        ])
+
+    if not has_custom_cta_visual:
+        filters.extend([
+            f"drawbox=x=iw*0.060:y=ih*0.505:w=iw*0.880:h=ih*0.280:color=black@0.50:t=fill:enable='between(t\,{final_start:.3f}\,{duration:.3f})'",
+            f"drawbox=x=iw*0.060:y=ih*0.505:w=iw*0.880:h=5:color=0xFFD36A@0.95:t=fill:enable='between(t\,{final_start:.3f}\,{duration:.3f})'",
+            f"drawtext=fontfile='{FONT_FILE}':textfile='{files['cta']}':expansion=none:fontcolor=0x9EF0BD:bordercolor=black@0.70:borderw=2:fontsize={cta_size}:line_spacing=8:x=(w-text_w)/2:y=h*0.585:shadowcolor=black@0.72:shadowx=2:shadowy=2:enable='between(t\,{final_start:.3f}\,{duration:.3f})'",
+            f"drawtext=fontfile='{FONT_FILE}':textfile='{files['brand']}':expansion=none:fontcolor=white@0.82:bordercolor=black@0.55:borderw=1:fontsize={brand_size}:x=(w-text_w)/2:y=h*0.725:enable='between(t\,{final_start:.3f}\,{duration:.3f})'",
+        ])
+
+    video_filter = ",".join(filters)
+
 
     command = [
         "ffmpeg",
@@ -18219,15 +18246,35 @@ def create_single_product_video_campaign(
     raw_clip = asset_clips[0]
 
     def selected_image_source(clip_id: str | None) -> dict[str, Any] | None:
-        asset = asset_from_clip_id(clip_id)
-        if asset is None:
+        value = str(clip_id or "").strip()
+        if not value:
             return None
-        if asset.asset_type != "image":
-            raise HTTPException(
-                status_code=422,
-                detail="Hook/CTA image harus memakai asset image",
-            )
-        return asset_to_single_clip(asset)
+
+        asset = asset_from_clip_id(value)
+        if asset is not None:
+            if asset.asset_type != "image":
+                raise HTTPException(
+                    status_code=422,
+                    detail="Hook/CTA image harus memakai asset image",
+                )
+            return asset_to_single_clip(asset)
+
+        visual = read_campaign_visual_asset(value)
+        if visual is None:
+            return None
+
+        return {
+            "clip_id": f"visual-{visual.get('asset_id') or value}",
+            "visual_asset_id": visual.get("asset_id") or value,
+            "archive": visual.get("archive"),
+            "path": visual.get("archive"),
+            "label": visual.get("original_name") or "Campaign visual",
+            "source": "campaign_visual",
+            "mime_type": visual.get("content_type") or "image/png",
+            "media_type": "image",
+            "asset_type": "image",
+            "kind": "local",
+        }
 
     image_items = image_sources(
         product,
