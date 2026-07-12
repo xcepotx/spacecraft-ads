@@ -7864,14 +7864,33 @@ body.page-content-images #productLibraryHeader,
 body.page-content-images #productToolbar,
 body.page-content-images #productGrid,
 body.page-content-images #multiProductSection,
+body.page-content-images #singleProductCampaign,
 body.page-products #studioHeroSection,
 body.page-products #contentImageSection,
 body.page-products #multiProductSection,
+body.page-products #singleProductCampaign,
+body.page-single-product #studioHeroSection,
+body.page-single-product #productLibraryHeader,
+body.page-single-product #productToolbar,
+body.page-single-product #productGrid,
+body.page-single-product #contentImageSection,
+body.page-single-product #multiProductSection,
 body.page-studio #productLibraryHeader,
 body.page-studio #productToolbar,
 body.page-studio #productGrid,
-body.page-studio #contentImageSection {
+body.page-studio #contentImageSection,
+body.page-studio #singleProductCampaign {
     display: none !important;
+}
+
+body.page-single-product #singleProductCampaign {
+    display: block !important;
+    margin: 0 auto;
+    max-width: 980px;
+}
+
+body.page-single-product .page {
+    padding-top: 24px;
 }
 
 @media (max-width: 420px) {

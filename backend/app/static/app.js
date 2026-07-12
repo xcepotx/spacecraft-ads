@@ -62,6 +62,9 @@ const productLibraryMenuButton =
 const contentImageMenuButton =
     document.getElementById("contentImageMenuButton");
 
+const singleProductMenuButton =
+    document.getElementById("singleProductMenuButton");
+
 const backToStudioButton =
     document.getElementById("backToStudioButton");
 
@@ -100,6 +103,9 @@ const singleProductSelect =
 
 const singleProductRawVideoSelect =
     document.getElementById("singleProductRawVideoSelect");
+
+const singleProductCampaign =
+    document.getElementById("singleProductCampaign");
 
 const singleProductHookImageSelect =
     document.getElementById("singleProductHookImageSelect");
@@ -1909,9 +1915,15 @@ function isContentImagePage() {
 }
 
 
+function isSingleProductPage() {
+    return currentPage() === "single-product";
+}
+
+
 function applyPageLayout() {
     const productPage = isProductLibraryPage();
     const contentPage = isContentImagePage();
+    const singleProductPage = isSingleProductPage();
     document.body.classList.toggle(
         "page-products",
         productPage
@@ -1921,16 +1933,24 @@ function applyPageLayout() {
         contentPage
     );
     document.body.classList.toggle(
+        "page-single-product",
+        singleProductPage
+    );
+    document.body.classList.toggle(
         "page-studio",
-        !productPage && !contentPage
+        !productPage && !contentPage && !singleProductPage
     );
 
     if (studioHeroSection) {
-        studioHeroSection.hidden = productPage || contentPage;
+        studioHeroSection.hidden = productPage || contentPage || singleProductPage;
     }
 
     if (multiProductSection) {
-        multiProductSection.hidden = productPage || contentPage;
+        multiProductSection.hidden = productPage || contentPage || singleProductPage;
+    }
+
+    if (singleProductCampaign) {
+        singleProductCampaign.hidden = !singleProductPage;
     }
 
     if (contentImageSection) {
@@ -1950,7 +1970,7 @@ function applyPageLayout() {
     }
 
     if (multiProductMenuButton) {
-        multiProductMenuButton.textContent = productPage || contentPage
+        multiProductMenuButton.textContent = productPage || contentPage || singleProductPage
             ? "Studio Generator"
             : "Multi Produk";
     }
@@ -1963,6 +1983,11 @@ function applyPageLayout() {
     contentImageMenuButton?.classList.toggle(
         "is-active",
         contentPage
+    );
+
+    singleProductMenuButton?.classList.toggle(
+        "is-active",
+        singleProductPage
     );
 }
 
@@ -2000,6 +2025,17 @@ function openContentImagePage() {
     window.location.href = target.toString();
 }
 
+
+function openSingleProductPage() {
+    const target = new URL(
+        window.location.href
+    );
+    target.searchParams.set(
+        "page",
+        "single-product"
+    );
+    window.location.href = target.toString();
+}
 
 
 function renderMultiProductPicker() {
@@ -5700,7 +5736,11 @@ logoutButton.addEventListener(
 multiProductMenuButton?.addEventListener(
     "click",
     () => {
-        if (isProductLibraryPage() || isContentImagePage()) {
+        if (
+            isProductLibraryPage() ||
+            isContentImagePage() ||
+            isSingleProductPage()
+        ) {
             openStudioPage();
             return;
         }
@@ -5722,6 +5762,11 @@ productLibraryMenuButton?.addEventListener(
 contentImageMenuButton?.addEventListener(
     "click",
     openContentImagePage
+);
+
+singleProductMenuButton?.addEventListener(
+    "click",
+    openSingleProductPage
 );
 
 backToStudioButton?.addEventListener(
