@@ -12631,10 +12631,15 @@ def render_single_product_video(
     ):
         visual_source = config.get(visual_key)
         if isinstance(visual_source, dict):
+            visual_slide = dict(visual_source)
+            visual_slide["_static_slide"] = True
+            visual_slide["_campaign_visual_role"] = (
+                "hook" if visual_key.startswith("hook") else "cta"
+            )
             if visual_key.startswith("hook"):
-                asset_items.insert(0, visual_source)
+                asset_items.insert(0, visual_slide)
             else:
-                asset_items.append(visual_source)
+                asset_items.append(visual_slide)
 
     image_items = [
         item
@@ -12735,7 +12740,11 @@ def render_single_product_video(
             temp_dir=temp_dir,
             aspect_ratio=config.get("aspect_ratio", "9:16"),
             duration=segment_duration,
-            motion="slow_zoom",
+            motion=(
+                "static"
+                if source.get("_static_slide")
+                else "slow_zoom"
+            ),
             fit_mode="cover",
         )
         segments.append(image_segment)
@@ -12828,38 +12837,58 @@ def render_photo_segment(
     )
 
     frames = max(1, int(duration * 30))
-    zoom, x_expr, y_expr = motion_expression(
-        motion,
-        frames,
-    )
+    motion = str(motion or "slow_zoom").strip().lower()
 
-    if fit_mode == "contain":
-        video_filter = (
-            f"scale={width}:{height}:"
-            "force_original_aspect_ratio=decrease,"
-            f"pad={width}:{height}:"
-            "(ow-iw)/2:(oh-ih)/2:"
-            "color=0xF3F5FA,"
-            "setsar=1,"
-            f"zoompan=z='{zoom}':"
-            f"x='{x_expr}':"
-            f"y='{y_expr}':"
-            f"d={frames}:"
-            f"s={width}x{height}:"
-            "fps=30,format=yuv420p"
-        )
+    if motion == "static":
+        if fit_mode == "contain":
+            video_filter = (
+                f"scale={width}:{height}:"
+                "force_original_aspect_ratio=decrease,"
+                f"pad={width}:{height}:"
+                "(ow-iw)/2:(oh-ih)/2:"
+                "color=0xF3F5FA,"
+                "setsar=1,fps=30,format=yuv420p"
+            )
+        else:
+            video_filter = (
+                f"scale={width}:{height}:"
+                "force_original_aspect_ratio=increase,"
+                f"crop={width}:{height},"
+                "setsar=1,fps=30,format=yuv420p"
+            )
     else:
-        video_filter = (
-            f"scale={width}:{height}:"
-            "force_original_aspect_ratio=increase,"
-            f"crop={width}:{height},"
-            f"zoompan=z='{zoom}':"
-            f"x='{x_expr}':"
-            f"y='{y_expr}':"
-            f"d={frames}:"
-            f"s={width}x{height}:"
-            "fps=30,format=yuv420p"
+        zoom, x_expr, y_expr = motion_expression(
+            motion,
+            frames,
         )
+
+        if fit_mode == "contain":
+            video_filter = (
+                f"scale={width}:{height}:"
+                "force_original_aspect_ratio=decrease,"
+                f"pad={width}:{height}:"
+                "(ow-iw)/2:(oh-ih)/2:"
+                "color=0xF3F5FA,"
+                "setsar=1,"
+                f"zoompan=z='{zoom}':"
+                f"x='{x_expr}':"
+                f"y='{y_expr}':"
+                f"d={frames}:"
+                f"s={width}x{height}:"
+                "fps=30,format=yuv420p"
+            )
+        else:
+            video_filter = (
+                f"scale={width}:{height}:"
+                "force_original_aspect_ratio=increase,"
+                f"crop={width}:{height},"
+                f"zoompan=z='{zoom}':"
+                f"x='{x_expr}':"
+                f"y='{y_expr}':"
+                f"d={frames}:"
+                f"s={width}x{height}:"
+                "fps=30,format=yuv420p"
+            )
 
     command = [
         "ffmpeg",
