@@ -12893,6 +12893,12 @@ def render_photo_segment(
     command = [
         "ffmpeg",
         "-y",
+        "-loop",
+        "1",
+        "-framerate",
+        "30",
+        "-t",
+        f"{duration:.3f}",
         "-i",
         str(source_path),
         "-vf",
