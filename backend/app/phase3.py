@@ -18838,17 +18838,19 @@ def list_multi_product_campaigns(
         ).all()
     )
 
+    def is_render_campaign(campaign: CreativeCampaign) -> bool:
+        settings = campaign.settings or {}
+        render_mode = str(settings.get("render_mode") or "").strip()
+        if render_mode in {"raw_catalog", "single_product"}:
+            return True
+        return int(settings.get("product_count", 1) or 1) > 1
+
     return {
         "ok": True,
         "campaigns": [
             campaign_to_dict(campaign)
             for campaign in campaigns
-            if int(
-                (campaign.settings or {}).get(
-                    "product_count",
-                    1,
-                )
-            ) > 1
+            if is_render_campaign(campaign)
         ],
     }
 
