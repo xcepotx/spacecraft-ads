@@ -3125,7 +3125,39 @@ def b19a_catalog_to_dict(
     product_count = len(products)
     reasons: list[str] = []
 
-    if product_count < 5:
+    catalog_code = str(
+        catalog.catalog_code or ""
+    ).strip().upper()
+
+    flow_type = str(
+        catalog.flow_type or ""
+    ).strip().lower()
+
+    catalog_type = str(
+        catalog.catalog_type or ""
+    ).strip().lower()
+
+    single_product_catalog = (
+        product_count == 1
+        and (
+            flow_type in {
+                "custom_keycap",
+                "single_product",
+                "dinochibi",
+                "dino_chibi",
+                "dino",
+            }
+            or catalog_type in {
+                "custom",
+                "single",
+                "single_product",
+            }
+            or catalog_code.startswith("CKEY")
+            or catalog_code.startswith("DINO")
+        )
+    )
+
+    if product_count < 5 and not single_product_catalog:
         reasons.append(
             "Catalog memiliki kurang "
             "dari 5 produk"
@@ -3151,7 +3183,10 @@ def b19a_catalog_to_dict(
 
     compatible = (
         catalog.status == "published"
-        and 5 <= product_count <= 6
+        and (
+            5 <= product_count <= 6
+            or single_product_catalog
+        )
         and mapped_count == product_count
         and published_count == product_count
     )
