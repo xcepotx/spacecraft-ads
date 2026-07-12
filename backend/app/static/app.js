@@ -233,6 +233,18 @@ const workspaceContent =
     document.getElementById("workspaceContent");
 
 
+
+function stripPriceMentionsForDisplay(text) {
+    return String(text || "")
+        .replace(/\b(harga(?:nya)?|mulai|start(?:ing)? from)\s*(?:adalah|cuma|hanya|sekitar|dari)?\s*(rp|idr)?\s*[0-9][0-9\.,]*(?:\s*(?:ribu|rb|k))?\.?/gi, "")
+        .replace(/\b(rp|idr)\s*[0-9][0-9\.,]*(?:\s*(?:ribu|rb|k))?\b/gi, "")
+        .replace(/\b[0-9][0-9\.,]*(?:\s*(?:ribu|rb|k))\b/gi, "")
+        .replace(/\s+([,.!?])/g, "$1")
+        .replace(/(?:\s*[,.]){2,}/g, ".")
+        .replace(/\s+/g, " ")
+        .replace(/^[\s.,-]+|[\s.,-]+$/g, "");
+}
+
 function escapeHtml(value) {
     return String(value ?? "")
         .replaceAll("&", "&amp;")
@@ -8795,8 +8807,10 @@ function renderJobCard(
                     <small class="vo-script">
                         <b>VO:</b>
                         ${escapeHtml(
-                            job.config.voiceover.script
-                            || ""
+                            stripPriceMentionsForDisplay(
+                                job.config.voiceover.script
+                                || ""
+                            )
                         )}
                     </small>
                 `

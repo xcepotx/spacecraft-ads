@@ -5579,7 +5579,7 @@ def b11_campaign_copy(
     default_cta = (
         cta_candidates[0]
         if cta_candidates
-        else "Pesan sekarang melalui WhatsApp."
+        else "Lihat detail dan checkout di SpaceCraft."
     )
 
     promo_sentence = (
@@ -5605,15 +5605,14 @@ def b11_campaign_copy(
             f"Pilihan menarik untuk kamu yang mencari "
             f"{product_label}. Cocok untuk audience "
             f"{audience.replace('_', ' ')}."
-            f"{promo_sentence} Hubungi kami melalui "
-            "WhatsApp untuk detail dan pemesanan."
+            f"{promo_sentence} Buka SpaceCraft untuk detail dan checkout."
         ),
     ]
 
     headlines = [
         f"{product_names[0]} Pilihan SpaceCraft",
         f"Promo {template_label}",
-        "Pesan Mudah via WhatsApp",
+        "Checkout Mudah di SpaceCraft",
         "Pilihan Produk Unik Hari Ini",
         (
             f"Diskon {promo_discount}% Sekarang"
@@ -5624,8 +5623,7 @@ def b11_campaign_copy(
 
     descriptions = [
         (
-            f"Temukan {product_label} dan pesan "
-            "langsung melalui WhatsApp."
+            f"Temukan {product_label} dan checkout di SpaceCraft."
         ),
         (
             f"{template_label} dengan pilihan produk "
@@ -5645,9 +5643,21 @@ def b11_campaign_copy(
         "Halo SpaceCraft, saya tertarik dengan "
         f"campaign {b11_campaign_code(campaign)} "
         f"untuk produk {product_label}. "
-        "Boleh minta informasi harga, stok, "
-        "dan cara pemesanannya?"
+        "Saya ingin lanjut checkout di SpaceCraft."
     )
+
+    primary_texts = [
+        strip_price_mentions_for_ads_text(item)
+        for item in primary_texts
+    ]
+    headlines = [
+        strip_price_mentions_for_ads_text(item)
+        for item in headlines
+    ]
+    descriptions = [
+        strip_price_mentions_for_ads_text(item)
+        for item in descriptions
+    ]
 
     return {
         "campaign_code":
@@ -5660,17 +5670,20 @@ def b11_campaign_copy(
         "primary_texts": [
             b11_clean_text(item)
             for item in primary_texts
+            if b11_clean_text(item)
         ],
         "headlines": [
             b11_clean_text(item)
             for item in headlines
+            if b11_clean_text(item)
         ],
         "descriptions": [
             b11_clean_text(item)
             for item in descriptions
+            if b11_clean_text(item)
         ],
         "cta_recommendation":
-            "Kirim Pesan WhatsApp",
+            "Buka Website",
         "whatsapp_opening":
             whatsapp_opening,
         "generated_at": now().isoformat(),
@@ -6857,6 +6870,29 @@ def format_rupiah(value: float | int) -> str:
     return "Rp" + f"{amount:,}".replace(",", ".")
 
 
+def strip_price_mentions_for_ads_text(text: str | None) -> str:
+    value = str(text or "")
+    value = re.sub(
+        r"(?i)\b(harga(?:nya)?|mulai|start(?:ing)? from)\s*(?:adalah|cuma|hanya|sekitar|dari)?\s*(rp|idr)?\s*[0-9][0-9\.,]*(?:\s*(?:ribu|rb|k))?\.?",
+        "",
+        value,
+    )
+    value = re.sub(
+        r"(?i)\b(rp|idr)\s*[0-9][0-9\.,]*(?:\s*(?:ribu|rb|k))?\b",
+        "",
+        value,
+    )
+    value = re.sub(
+        r"(?i)\b[0-9][0-9\.,]*(?:\s*(?:ribu|rb|k))\b",
+        "",
+        value,
+    )
+    value = re.sub(r"\s+([,.!?])", r"\1", value)
+    value = re.sub(r"(?:\s*[,.]){2,}", ".", value)
+    value = re.sub(r"\s+", " ", value).strip(" .,-")
+    return value
+
+
 def product_collection_price_label(
     products: list[Product],
 ) -> str:
@@ -7152,7 +7188,7 @@ def creative_template_text(
                 "Jangan tunggu kehabisan varian favorit.",
             ],
             [
-                "Pesan sekarang melalui WhatsApp",
+                "Lihat detail dan checkout di SpaceCraft",
                 "Pilih produk favoritmu sekarang",
                 "Tanya stok sebelum kehabisan",
                 "Klik dan lanjutkan pemesanan",
@@ -7773,7 +7809,7 @@ def build_catalog_voiceover_draft(
             )
         script_parts.append(offer_sentence)
 
-    script_parts.append('Pesan sekarang melalui WhatsApp.')
+    script_parts.append('Lihat detail dan checkout di SpaceCraft.')
     draft = ' '.join(item.strip() for item in script_parts if item.strip())
     return normalize_tts_text_indonesian(draft, exact_names + aliases)
 
@@ -7822,7 +7858,7 @@ def build_voiceover_script(
     replacements = {
         "hook": hook,
         "product": product_name,
-        "price": price,
+        "price": "",
         "cta": cta,
         "selling_point": selling_point,
     }
@@ -7854,7 +7890,7 @@ def build_voiceover_script(
         script = (
             f"{hook} Ini beberapa pilihan produk 3D print "
             f"dari Spacecraft. {selling_point}. "
-            f"Harga {price}. {cta}."
+            f"{cta}."
         )
     elif audience == "retail_bulk":
         script = (
@@ -7862,7 +7898,7 @@ def build_voiceover_script(
             f"Bisa dibeli satuan, dan kalau ambil beberapa varian "
             f"bisa jadi bundle hemat untuk hadiah, koleksi, "
             f"atau souvenir kecil. "
-            f"Harganya {price}. {cta}."
+            f"{cta}."
         )
     elif audience == "reseller":
         script = (
@@ -7881,13 +7917,13 @@ def build_voiceover_script(
     elif duration_seconds <= 10:
         script = (
             f"{hook} Ini {product.name}. "
-            f"Harganya {price}. {cta}."
+            f"{cta}."
         )
     elif duration_seconds <= 15:
         script = (
             f"{hook} Ini {product.name}. "
             f"{selling_point}. "
-            f"Harganya {price}. {cta}."
+            f"{cta}."
         )
     elif duration_seconds <= 20:
         material = (
@@ -7900,7 +7936,7 @@ def build_voiceover_script(
             f"Ukurannya mungil, detailnya rapi, "
             f"dan cocok jadi aksesori koleksi atau hadiah kecil. "
             f"Dibuat menggunakan {material}. "
-            f"Harganya {price}. {cta}."
+            f"{cta}."
         )
     else:
         material = (
@@ -7913,7 +7949,7 @@ def build_voiceover_script(
             f"Dibuat menggunakan {material}, "
             f"dengan detail yang menarik untuk "
             f"koleksi pribadi atau hadiah. "
-            f"Harganya {price}. {cta}."
+            f"{cta}."
         )
 
     max_words = {
@@ -7924,7 +7960,9 @@ def build_voiceover_script(
     }.get(duration_seconds, 34)
 
     return limit_words(
-        " ".join(script.split()),
+        " ".join(
+            strip_price_mentions_for_ads_text(script).split()
+        ),
         max_words,
     )
 
@@ -9513,14 +9551,12 @@ def render_slideshow_video(
     frames = duration * 30
     hook_size = 32 if width <= 720 else 42
     title_size = 25 if width <= 720 else 32
-    price_size = 36 if width <= 720 else 48
     cta_size = 22 if width <= 720 else 30
     brand_size = 17 if width <= 720 else 22
 
     files = {
         "hook": temp_dir / "hook.txt",
         "name": temp_dir / "name.txt",
-        "price": temp_dir / "price.txt",
         "cta": temp_dir / "cta.txt",
         "brand": temp_dir / "brand.txt",
     }
@@ -9535,10 +9571,6 @@ def render_slideshow_video(
         encoding="utf-8",
     )
 
-    files["price"].write_text(
-        str(config["price_label"]),
-        encoding="utf-8",
-    )
 
     files["cta"].write_text(
         wrap(config["cta"], 40),
@@ -9557,17 +9589,14 @@ def render_slideshow_video(
     if config["layout"] == "center_focus":
         hook_y = "h*0.14"
         name_y = "h*0.55"
-        price_y = "h*0.72"
         cta_y = "h*0.84"
     elif config["layout"] == "bottom_focus":
         hook_y = "h*0.08"
         name_y = "h*0.63"
-        price_y = "h*0.77"
         cta_y = "h*0.88"
     else:
         hook_y = "h*0.07"
         name_y = "h*0.58"
-        price_y = "h*0.74"
         cta_y = "h*0.86"
 
     video_filter = (
@@ -9604,15 +9633,6 @@ def render_slideshow_video(
         "line_spacing=8:"
         "x=(w-text_w)/2:"
         f"y={name_y}:"
-        "box=1:"
-        "boxcolor=black@0.48:"
-        "boxborderw=14,"
-        f"drawtext=fontfile='{FONT_FILE}':"
-        f"textfile='{files['price']}':"
-        "fontcolor=0x9EF0BD:"
-        f"fontsize={price_size}:"
-        "x=(w-text_w)/2:"
-        f"y={price_y}:"
         "box=1:"
         "boxcolor=black@0.48:"
         "boxborderw=14,"
@@ -9855,7 +9875,6 @@ def render_ai_product_video(
 
     hook_size = 36 if width <= 720 else 46
     title_size = 30 if width <= 720 else 40
-    price_size = 42 if width <= 720 else 54
     cta_size = 27 if width <= 720 else 34
     brand_size = 19 if width <= 720 else 24
 
@@ -9877,10 +9896,6 @@ def render_ai_product_video(
         encoding="utf-8",
     )
 
-    files["price"].write_text(
-        str(config["price_label"]),
-        encoding="utf-8",
-    )
 
     files["cta"].write_text(
         wrap(config["cta"], 26),
@@ -9931,15 +9946,6 @@ def render_ai_product_video(
         "line_spacing=6:"
         "x=w*0.15:"
         "y=h*0.635:"
-        "shadowcolor=black@0.50:"
-        "shadowx=1:"
-        "shadowy=1,"
-        f"drawtext=fontfile='{FONT_FILE}':"
-        f"textfile='{files['price']}':"
-        "fontcolor=0x9EF0BD:"
-        f"fontsize={price_size}:"
-        "x=w*0.15:"
-        "y=h*0.695:"
         "shadowcolor=black@0.50:"
         "shadowx=1:"
         "shadowy=1,"
@@ -10192,14 +10198,12 @@ def overlay_existing_video(
 
     hook_size = 35 if width <= 720 else 46
     title_size = 27 if width <= 720 else 35
-    price_size = 42 if width <= 720 else 54
     cta_size = 25 if width <= 720 else 32
     brand_size = 18 if width <= 720 else 23
 
     files = {
         "hook": temp_dir / "hybrid-hook.txt",
         "name": temp_dir / "hybrid-name.txt",
-        "price": temp_dir / "hybrid-price.txt",
         "cta": temp_dir / "hybrid-cta.txt",
         "brand": temp_dir / "hybrid-brand.txt",
     }
@@ -10214,10 +10218,6 @@ def overlay_existing_video(
         encoding="utf-8",
     )
 
-    files["price"].write_text(
-        str(config["price_label"]),
-        encoding="utf-8",
-    )
 
     files["cta"].write_text(
         wrap(config["cta"], 40),
@@ -10260,17 +10260,6 @@ def overlay_existing_video(
         "shadowcolor=black@0.62:"
         "shadowx=2:"
         "shadowy=2,"
-        f"drawtext=fontfile='{FONT_FILE}':"
-        f"textfile='{files['price']}':"
-        "fontcolor=0x9EF0BD:"
-        "bordercolor=black@0.82:"
-        "borderw=3:"
-        f"fontsize={price_size}:"
-        "x=(w-text_w)/2:"
-        "y=h*0.745:"
-        "shadowcolor=black@0.72:"
-        "shadowx=2:"
-        "shadowy=3,"
         f"drawtext=fontfile='{FONT_FILE}':"
         f"textfile='{files['cta']}':"
         "fontcolor=0x7DB2FF:"
@@ -12452,9 +12441,6 @@ def overlay_single_product_video(
     product_name = str(
         config.get("product_name") or "Produk SpaceCraft"
     ).strip()
-    price_label = str(
-        config.get("price_label") or "Cek harga"
-    ).strip()
     cta = (
         str(config.get("cta") or "").strip()
         or "Chat sekarang, pilih varian favoritmu"
@@ -12463,7 +12449,6 @@ def overlay_single_product_video(
     files = {
         "hook": temp_dir / "single-hook.txt",
         "name": temp_dir / "single-name.txt",
-        "price": temp_dir / "single-price.txt",
         "cta": temp_dir / "single-cta.txt",
         "badge": temp_dir / "single-badge.txt",
         "brand": temp_dir / "single-brand.txt",
@@ -12471,14 +12456,12 @@ def overlay_single_product_video(
 
     files["hook"].write_text(wrap(hook, 24), encoding="utf-8")
     files["name"].write_text(wrap(product_name, 24), encoding="utf-8")
-    files["price"].write_text(price_label, encoding="utf-8")
     files["cta"].write_text(wrap(cta, 30), encoding="utf-8")
     files["badge"].write_text("SINGLE PRODUCT ADS", encoding="utf-8")
     files["brand"].write_text("spacecraft.id", encoding="utf-8")
 
     hook_size = 31 if width <= 720 else 42
     name_size = 25 if width <= 720 else 34
-    price_size = 32 if width <= 720 else 44
     cta_size = 24 if width <= 720 else 32
     badge_size = 14 if width <= 720 else 18
     brand_size = 15 if width <= 720 else 20
@@ -12527,7 +12510,6 @@ def overlay_single_product_video(
             f"drawbox=x=iw*0.070:y=ih*0.650:w=iw*0.860:h=ih*0.195:color=black@0.46:t=fill:enable='between(t\,{product_overlay_start:.3f}\,{product_overlay_end:.3f})'",
             f"drawbox=x=iw*0.070:y=ih*0.650:w=6:h=ih*0.195:color=0x9EF0BD@0.94:t=fill:enable='between(t\,{product_overlay_start:.3f}\,{product_overlay_end:.3f})'",
             f"drawtext=fontfile='{FONT_FILE}':textfile='{files['name']}':expansion=none:fontcolor=white:bordercolor=black@0.65:borderw=2:fontsize={name_size}:line_spacing=7:x=w*0.105:y=h*0.675:shadowcolor=black@0.70:shadowx=2:shadowy=2:enable='between(t\,{product_overlay_start:.3f}\,{product_overlay_end:.3f})'",
-            f"drawtext=fontfile='{FONT_FILE}':textfile='{files['price']}':expansion=none:fontcolor=0xFFD36A:bordercolor=black@0.70:borderw=2:fontsize={price_size}:x=w*0.105:y=h*0.765:shadowcolor=black@0.74:shadowx=2:shadowy=2:enable='between(t\,{product_overlay_start:.3f}\,{product_overlay_end:.3f})'",
         ])
 
     if not has_custom_cta_visual:
@@ -18301,7 +18283,7 @@ def create_single_product_video_campaign(
     )
     cta = (
         payload.cta
-        or "Klik dan pesan lewat WhatsApp"
+        or "Lihat detail dan checkout di SpaceCraft"
     )
 
     analysis = db.scalar(
