@@ -3057,8 +3057,9 @@ def b19a_raw_video_counts(
             ProductAsset.product_id.in_(
                 local_product_ids
             ),
-            ProductAsset.asset_type
-            == "video",
+            ProductAsset.asset_type.in_(
+                ["video", "image"]
+            ),
         )
         .group_by(
             ProductAsset.product_id

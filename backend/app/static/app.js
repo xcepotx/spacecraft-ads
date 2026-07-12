@@ -1129,7 +1129,7 @@ function b19aRenderCatalogDetail(
                                     .products_ready
                                 || 0
                             )}
-                            produk memiliki raw video
+                            produk memiliki asset image/video
                         </span>
                         <span>
                             ${Number(
@@ -1137,7 +1137,7 @@ function b19aRenderCatalogDetail(
                                     .products_with_primary
                                 || 0
                             )}
-                            produk memiliki primary raw
+                            produk memiliki primary video
                         </span>
                     </div>
                 </div>
@@ -1202,8 +1202,8 @@ function b19aRenderCatalogDetail(
                                     readinessItem
                                         .raw_video_count
                                     || 0
-                                )} raw video`
-                                : "Raw belum ada"
+                                )} asset`
+                                : "Asset belum ada"
                             }
                         </span>
 
@@ -1216,13 +1216,13 @@ function b19aRenderCatalogDetail(
                                     ${
                                         readinessItem
                                             ?.creative_ready
-                                        ? "Tambah Raw"
-                                        : "Upload Raw"
+                                        ? "Tambah Asset"
+                                        : "Upload Asset"
                                     }
 
                                     <input
                                         type="file"
-                                        accept=".mp4,.mov,.webm,video/mp4,video/webm,video/quicktime"
+                                        accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp,.mp4,.mov,.webm,video/mp4,video/webm,video/quicktime"
                                         multiple
                                         onchange="b19bUploadCatalogRaw(
                                             ${Number(
@@ -1496,7 +1496,7 @@ function b19aResetProductSelection() {
             select.disabled = true;
             select.innerHTML = (
                 '<option value="">'
-                + "Centang untuk memuat raw video"
+                + "Centang untuk memuat asset"
                 + "</option>"
             );
         }
@@ -1641,7 +1641,7 @@ async function b19aApplyCatalogObject(
         b19aSetStatus(
             `${catalog.catalog_code} `
             + "berhasil diterapkan. "
-            + "Lengkapi raw video sebelum "
+            + "Lengkapi asset sebelum "
             + "render.",
             "success"
         );
@@ -1764,7 +1764,7 @@ function b19aCatalogSelectionError(
             + "lengkap: "
             + `${readiness.products_ready}/`
             + `${readiness.products_total} `
-            + "produk memiliki raw video."
+            + "produk memiliki asset image/video."
         );
     }
 
@@ -2006,8 +2006,8 @@ function renderMultiProductPicker() {
     multiProductPicker.innerHTML = `
         <div class="picker-head">
             <div>
-                <strong>Produk dan Raw Video Real</strong>
-                <span>Pilih 5–6 produk, lalu pilih raw video real yang akan digabung menjadi catalog ads.</span>
+                <strong>Produk dan Asset Ads</strong>
+                <span>Pilih produk, lalu pilih image atau video yang akan digabung menjadi catalog ads.</span>
             </div>
             <div class="picker-head-actions">
                 <label class="catalog-filter-toggle">
@@ -2058,7 +2058,7 @@ function renderMultiProductPicker() {
                                 class="campaignRawVideoStatus"
                                 data-product-id="${productId}"
                             >
-                                Pilih produk untuk memuat raw video
+                                Pilih produk untuk memuat asset
                             </small>
                         </span>
                         <div class="campaign-raw-tools">
@@ -2074,7 +2074,7 @@ function renderMultiProductPicker() {
                                 "
                                 disabled
                             >
-                                <option value="">Centang untuk memuat raw video</option>
+                                <option value="">Centang untuk memuat asset</option>
                             </select>
 
                             <div
@@ -2181,7 +2181,7 @@ async function loadSingleProductRawVideos(productId) {
     if (!singleProductRawVideoSelect) return;
 
     singleProductRawVideoSelect.innerHTML = `
-        <option value="">Memuat raw video...</option>
+        <option value="">Memuat asset...</option>
     `;
     singleProductRawVideoSelect.disabled = true;
 
@@ -2203,7 +2203,7 @@ async function loadSingleProductRawVideos(productId) {
 
         if (!rawVideos.length) {
             singleProductRawVideoSelect.innerHTML = `
-                <option value="">Belum ada raw video</option>
+                <option value="">Belum ada asset</option>
             `;
             return;
         }
@@ -2217,7 +2217,7 @@ async function loadSingleProductRawVideos(productId) {
         singleProductRawVideoSelect.disabled = false;
     } catch (error) {
         singleProductRawVideoSelect.innerHTML = `
-            <option value="">Gagal memuat raw video</option>
+            <option value="">Gagal memuat asset</option>
         `;
         if (singleProductMessage) {
             singleProductMessage.textContent =
@@ -2369,7 +2369,7 @@ async function generateSingleProductCampaign() {
     if (!rawClipId) {
         if (singleProductMessage) {
             singleProductMessage.textContent =
-                "Produk ini belum punya raw video yang dipilih.";
+                "Produk ini belum punya asset image/video yang dipilih.";
         }
         return;
     }
@@ -2498,7 +2498,7 @@ function setRawVideoGenerateState(productId, text, isBusy = false) {
 
     if (button) {
         button.disabled = Boolean(isBusy);
-        button.textContent = isBusy ? "Generating..." : "Upload Raw Video";
+        button.textContent = isBusy ? "Generating..." : "Upload Asset";
     }
 }
 
@@ -2637,7 +2637,7 @@ async function populateRawVideoSelect(productId, preferredClipId = "") {
         `;
         setRawVideoGenerateState(
             productId,
-            `Gagal memuat raw video: ${error.message}`
+            `Gagal memuat asset: ${error.message}`
         );
     }
 }
@@ -2705,11 +2705,11 @@ async function toggleCampaignProductRaw(input) {
 
         select.disabled = true;
         select.innerHTML =
-            '<option value="">Centang untuk memuat raw video</option>';
+            '<option value="">Centang untuk memuat asset</option>';
 
         setRawVideoGenerateState(
             productId,
-            "Pilih produk untuk memuat raw video"
+            "Pilih produk untuk memuat asset"
         );
 
         updateCatalogOrderUI();
@@ -4057,7 +4057,7 @@ function renderWorkspace(data) {
                     class="raw-video-library-grid"
                 >
                     <div class="empty">
-                        Memuat raw video...
+                        Memuat asset...
                     </div>
                 </div>
             </section>
@@ -4750,7 +4750,7 @@ async function loadWorkspaceRawVideoLibrary(
 
     target.innerHTML = `
         <div class="empty">
-            Memuat raw video...
+            Memuat asset...
         </div>
     `;
 
@@ -4766,14 +4766,14 @@ async function loadWorkspaceRawVideoLibrary(
         if (!videos.length) {
             target.innerHTML = `
                 <div class="empty">
-                    Belum ada raw video.
-                    Upload MP4, MOV, atau WebM.
+                    Belum ada asset.
+                    Upload JPG, PNG, WebP, MP4, MOV, atau WebM.
                 </div>
             `;
 
             if (status) {
                 status.textContent =
-                    "Belum ada video produk.";
+                    "Belum ada asset produk.";
             }
 
             return;
@@ -4785,13 +4785,13 @@ async function loadWorkspaceRawVideoLibrary(
 
         if (status) {
             status.textContent =
-                `${videos.length} raw video tersedia.`;
+                `${videos.length} asset tersedia.`;
         }
 
     } catch (error) {
         target.innerHTML = `
             <div class="empty">
-                Gagal memuat raw video:
+                Gagal memuat asset:
                 ${escapeHtml(error.message)}
             </div>
         `;
@@ -5012,7 +5012,7 @@ function clearCampaignVisualAsset(slot) {
 
 async function deleteRawVideo(assetId) {
     if (!confirm(
-        "Hapus raw video ini?"
+        "Hapus asset ini?"
     )) {
         return;
     }
@@ -5024,7 +5024,7 @@ async function deleteRawVideo(assetId) {
 
     if (status) {
         status.textContent =
-            "Menghapus raw video...";
+            "Menghapus asset...";
     }
 
     try {
@@ -5051,7 +5051,7 @@ async function deleteRawVideo(assetId) {
     } catch (error) {
         if (status) {
             status.textContent =
-                `Gagal menghapus video: `
+                `Gagal menghapus asset: `
                 + error.message;
         }
     }
@@ -5639,7 +5639,7 @@ function renderCampaignHistoryTable(campaigns) {
     if (!campaigns.length) {
         return `
             <div class="empty">
-                Belum ada raw video catalog ads.
+                Belum ada asset catalog ads.
             </div>
         `;
     }
