@@ -103,6 +103,24 @@ const singleProductHookImageSelect =
 const singleProductCtaImageSelect =
     document.getElementById("singleProductCtaImageSelect");
 
+const singleProductHookImageFile =
+    document.getElementById("singleProductHookImageFile");
+
+const singleProductCtaImageFile =
+    document.getElementById("singleProductCtaImageFile");
+
+const singleProductHookImageUploadButton =
+    document.getElementById("singleProductHookImageUploadButton");
+
+const singleProductCtaImageUploadButton =
+    document.getElementById("singleProductCtaImageUploadButton");
+
+const singleProductHookImageStatus =
+    document.getElementById("singleProductHookImageStatus");
+
+const singleProductCtaImageStatus =
+    document.getElementById("singleProductCtaImageStatus");
+
 const singleProductGenerateButton =
     document.getElementById(
         "singleProductGenerateButton"
@@ -2279,6 +2297,146 @@ function selectedSingleProductAssetIds() {
     return Array.from(singleProductRawVideoSelect.selectedOptions || [])
         .map(option => option.value)
         .filter(Boolean);
+}
+
+
+function singleProductVisualElements(slot) {
+    const normalizedSlot = slot === "cta" ? "cta" : "hook";
+
+    if (normalizedSlot === "cta") {
+        return {
+            slot: normalizedSlot,
+            file: singleProductCtaImageFile,
+            button: singleProductCtaImageUploadButton,
+            select: singleProductCtaImageSelect,
+            status: singleProductCtaImageStatus,
+        };
+    }
+
+    return {
+        slot: normalizedSlot,
+        file: singleProductHookImageFile,
+        button: singleProductHookImageUploadButton,
+        select: singleProductHookImageSelect,
+        status: singleProductHookImageStatus,
+    };
+}
+
+
+function updateSingleProductVisualStatus(slot, message, isError = false) {
+    const { status } = singleProductVisualElements(slot);
+    if (!status) return;
+    status.textContent = message;
+    status.classList.toggle("is-error", Boolean(isError));
+    status.classList.toggle("is-ready", !isError && Boolean(message));
+}
+
+
+async function uploadSingleProductVisualAsset(slot) {
+    const productId = Number(singleProductSelect?.value || 0);
+
+    if (!productId) {
+        updateSingleProductVisualStatus(
+            slot,
+            "Pilih produk dulu.",
+            true
+        );
+        return;
+    }
+
+    const elements = singleProductVisualElements(slot);
+    const file = elements.file?.files?.[0];
+
+    if (!file) {
+        updateSingleProductVisualStatus(
+            slot,
+            "Pilih image terlebih dahulu.",
+            true
+        );
+        return;
+    }
+
+    const validImage = (
+        file.type === "image/jpeg"
+        || file.type === "image/png"
+        || file.type === "image/webp"
+        || /\.(jpe?g|png|webp)$/i.test(file.name)
+    );
+
+    if (!validImage) {
+        updateSingleProductVisualStatus(
+            slot,
+            "File harus JPG, PNG, atau WebP.",
+            true
+        );
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append("files", file);
+
+    if (elements.button) {
+        elements.button.disabled = true;
+        elements.button.textContent = "Mengupload...";
+    }
+
+    updateSingleProductVisualStatus(
+        slot,
+        "Mengupload image..."
+    );
+
+    try {
+        const data = await api(
+            `/api/products/${productId}/assets`,
+            {
+                method: "POST",
+                body: formData,
+            }
+        );
+
+        const created = Array.isArray(data.assets)
+            ? data.assets[0]
+            : null;
+        const createdClipId = created?.clip_id
+            || (
+                created?.id
+                    ? `asset-${created.id}`
+                    : ""
+            );
+
+        if (elements.file) {
+            elements.file.value = "";
+        }
+
+        clearRawVideoCache(productId);
+        await loadSingleProductRawVideos(productId);
+
+        if (createdClipId && elements.select) {
+            elements.select.value = createdClipId;
+        }
+
+        updateSingleProductVisualStatus(
+            slot,
+            createdClipId
+                ? "Image terupload dan sudah dipilih."
+                : "Image terupload. Pilih dari dropdown.",
+            false
+        );
+    } catch (error) {
+        updateSingleProductVisualStatus(
+            slot,
+            `Upload gagal: ${error.message}`,
+            true
+        );
+    } finally {
+        if (elements.button) {
+            elements.button.disabled = false;
+            elements.button.textContent =
+                slot === "cta"
+                    ? "Upload CTA"
+                    : "Upload Hook";
+        }
+    }
 }
 
 
@@ -5581,6 +5739,7 @@ window.openWorkspace = openWorkspace;
 window.closeWorkspace = closeWorkspace;
 window.uploadAssets = uploadAssets;
 window.uploadRawVideos = uploadRawVideos;
+window.uploadSingleProductVisualAsset = uploadSingleProductVisualAsset;
 window.deleteRawVideo = deleteRawVideo;
 window.saveRawVideoSettings = saveRawVideoSettings;
 window.saveAssetAdsEnabled = saveAssetAdsEnabled;

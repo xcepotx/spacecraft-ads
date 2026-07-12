@@ -1543,6 +1543,24 @@
                             Auto generate jika kosong
                         </option>
                     </select>
+                    <input
+                        id="singleProductHookImageFile"
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                    >
+                    <div class="campaign-visual-actions compact">
+                        <button
+                            id="singleProductHookImageUploadButton"
+                            type="button"
+                            class="mini-button"
+                            onclick="uploadSingleProductVisualAsset('hook')"
+                        >
+                            Upload Hook
+                        </button>
+                    </div>
+                    <small id="singleProductHookImageStatus">
+                        Kosongkan untuk auto-generate.
+                    </small>
                 </div>
 
                 <div class="field">
@@ -1552,6 +1570,24 @@
                             Auto generate jika kosong
                         </option>
                     </select>
+                    <input
+                        id="singleProductCtaImageFile"
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                    >
+                    <div class="campaign-visual-actions compact">
+                        <button
+                            id="singleProductCtaImageUploadButton"
+                            type="button"
+                            class="mini-button"
+                            onclick="uploadSingleProductVisualAsset('cta')"
+                        >
+                            Upload CTA
+                        </button>
+                    </div>
+                    <small id="singleProductCtaImageStatus">
+                        Kosongkan untuk auto-generate.
+                    </small>
                 </div>
             </div>
 
@@ -1676,7 +1712,7 @@
     </section>
 </div>
 
-<script src="/static/app.js?v=single-product-multi-assets-20260712"></script>
+<script src="/static/app.js?v=single-product-hook-cta-upload-20260712"></script>
 <script src="/static/b18b-campaign-history-v3.js?v=b18f-20260705-pageable-history"></script>
 <script src="/static/b18a-voice-draft-persistence.js?v=b18f-20260625-104619"></script>
 <script src="/static/b18c-unified-copy.js?v=20260625-093445"></script>

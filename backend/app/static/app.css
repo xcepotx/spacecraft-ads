@@ -1782,6 +1782,28 @@ input {
     margin-top: 6px;
 }
 
+.single-product-campaign .field input[type="file"] {
+    border: 1px solid #d7deec;
+    border-radius: 12px;
+    margin-top: 8px;
+    padding: 9px;
+    width: 100%;
+}
+
+.single-product-campaign .campaign-visual-actions.compact {
+    margin-top: 8px;
+}
+
+.single-product-campaign small.is-ready {
+    color: #16845b;
+    font-weight: 700;
+}
+
+.single-product-campaign small.is-error {
+    color: #b42318;
+    font-weight: 700;
+}
+
 .single-product-actions {
     display: flex;
     align-items: center;
