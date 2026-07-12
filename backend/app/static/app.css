@@ -8087,3 +8087,14 @@ body.page-single-product .page {
         grid-template-columns: 1fr;
     }
 }
+
+
+.standalone-single-product .single-product-campaign {
+    display: block !important;
+    margin: 0 auto;
+    max-width: 980px;
+}
+
+.standalone-single-product .single-product-page {
+    padding-top: 24px;
+}

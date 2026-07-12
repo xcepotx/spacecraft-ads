@@ -783,6 +783,15 @@ def home():
     )
 
 
+@app.get("/single-product", include_in_schema=False)
+def single_product_page():
+    return FileResponse(
+        Path(__file__).parent
+        / "static"
+        / "single-product.html"
+    )
+
+
 @app.get("/health")
 def health(db: Session = Depends(get_db)):
     db.execute(select(1))

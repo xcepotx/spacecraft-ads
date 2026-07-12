@@ -1899,9 +1899,20 @@ function toggleCatalogProductFilter(input) {
 
 
 function currentPage() {
+    if (window.location.pathname === "/single-product") {
+        return "single-product";
+    }
+
     return new URLSearchParams(
         window.location.search
     ).get("page") || "studio";
+}
+
+
+function setGlobalStatus(message) {
+    if (globalStatus) {
+        globalStatus.textContent = message;
+    }
 }
 
 
@@ -2027,14 +2038,7 @@ function openContentImagePage() {
 
 
 function openSingleProductPage() {
-    const target = new URL(
-        window.location.href
-    );
-    target.searchParams.set(
-        "page",
-        "single-product"
-    );
-    window.location.href = target.toString();
+    window.location.href = "/single-product";
 }
 
 
@@ -3741,8 +3745,9 @@ async function loadProducts() {
         isProductLibraryPage();
 
     if (productPage) {
-        globalStatus.textContent =
-            "Memuat produk published...";
+        setGlobalStatus(
+            "Memuat produk published..."
+        );
     }
 
     const params = new URLSearchParams({
@@ -3751,7 +3756,7 @@ async function loadProducts() {
     });
 
     const keyword =
-        searchInput.value.trim();
+        (searchInput?.value || "").trim();
 
     if (keyword) {
         params.set(
@@ -3801,38 +3806,41 @@ async function loadProducts() {
                         .join("");
             }
 
-            globalStatus.textContent =
+            setGlobalStatus(
                 `${publishedProducts.length} dari `
                 + `${Number(data.total || 0)} `
-                + "produk published ditampilkan";
+                + "produk published ditampilkan"
+            );
         } else if (productGrid) {
             productGrid.innerHTML = "";
-            globalStatus.textContent = "";
+            setGlobalStatus("");
         }
 
     } catch (error) {
-        if (productPage) {
+        if (productPage && productGrid) {
             productGrid.innerHTML = `
                 <div class="empty">
-                    ${escapeHtml(
-                        error.message
-                    )}
+                    ${escapeHtml(error.message)}
                 </div>
             `;
         }
 
-        globalStatus.textContent =
-            "Gagal memuat produk";
+        setGlobalStatus(
+            "Gagal memuat produk"
+        );
     }
 }
 
 async function syncProducts() {
+    if (!syncButton) return;
+
     syncButton.disabled = true;
     syncButton.textContent =
         "Sinkronisasi...";
 
-    globalStatus.textContent =
-        "Mengambil status produk dari Spacecraft...";
+    setGlobalStatus(
+        "Mengambil status produk dari Spacecraft..."
+    );
 
     try {
         const data = await api(
@@ -3842,22 +3850,24 @@ async function syncProducts() {
             }
         );
 
-        globalStatus.textContent =
+        setGlobalStatus(
             `Sinkronisasi selesai: `
             + `${Number(
                 data.published_local || 0
             )} published ditampilkan, `
             + `${Number(
                 data.hidden_received || 0
-            )} draft/archived disembunyikan`;
+            )} draft/archived disembunyikan`
+        );
 
         await loadProducts();
         await loadHealth();
 
     } catch (error) {
-        globalStatus.textContent =
+        setGlobalStatus(
             `Sinkronisasi gagal: `
-            + error.message;
+            + error.message
+        );
 
     } finally {
         syncButton.disabled = false;
@@ -5709,12 +5719,12 @@ async function generateContentImage(event) {
 }
 
 
-searchButton.addEventListener(
+searchButton?.addEventListener(
     "click",
     loadProducts
 );
 
-searchInput.addEventListener(
+searchInput?.addEventListener(
     "keydown",
     event => {
         if (event.key === "Enter") {
@@ -5723,12 +5733,12 @@ searchInput.addEventListener(
     }
 );
 
-syncButton.addEventListener(
+syncButton?.addEventListener(
     "click",
     syncProducts
 );
 
-logoutButton.addEventListener(
+logoutButton?.addEventListener(
     "click",
     logout
 );
