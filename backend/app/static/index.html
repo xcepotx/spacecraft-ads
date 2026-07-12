@@ -1455,7 +1455,7 @@
                         SINGLE PRODUCT CAMPAIGN
                     </span>
                     <h3>
-                        1 raw video + image produk
+                        Multi asset image/video produk
                     </h3>
                     <p>
                         Untuk custom keycap, Dino Chibi,
@@ -1480,12 +1480,20 @@
                 </div>
 
                 <div class="field">
-                    <label>Raw Video</label>
-                    <select id="singleProductRawVideoSelect">
+                    <label>Asset Video / Image</label>
+                    <select
+                        id="singleProductRawVideoSelect"
+                        multiple
+                        size="5"
+                    >
                         <option value="">
                             Pilih produk dulu
                         </option>
                     </select>
+                    <small>
+                        Pilih beberapa asset. Urutan mengikuti pilihan teratas
+                        di daftar asset.
+                    </small>
                 </div>
 
                 <div class="field">
@@ -1524,6 +1532,26 @@
                         class="input"
                         placeholder="Contoh: Chat sekarang, pilih warna favoritmu"
                     >
+                </div>
+            </div>
+
+            <div class="single-product-grid two">
+                <div class="field">
+                    <label>Hook Image</label>
+                    <select id="singleProductHookImageSelect">
+                        <option value="">
+                            Auto generate jika kosong
+                        </option>
+                    </select>
+                </div>
+
+                <div class="field">
+                    <label>CTA Image</label>
+                    <select id="singleProductCtaImageSelect">
+                        <option value="">
+                            Auto generate jika kosong
+                        </option>
+                    </select>
                 </div>
             </div>
 
@@ -1648,7 +1676,7 @@
     </section>
 </div>
 
-<script src="/static/app.js?v=catalog-image-assets-20260712"></script>
+<script src="/static/app.js?v=single-product-multi-assets-20260712"></script>
 <script src="/static/b18b-campaign-history-v3.js?v=b18f-20260705-pageable-history"></script>
 <script src="/static/b18a-voice-draft-persistence.js?v=b18f-20260625-104619"></script>
 <script src="/static/b18c-unified-copy.js?v=20260625-093445"></script>

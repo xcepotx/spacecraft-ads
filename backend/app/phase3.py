@@ -1091,6 +1091,11 @@ class SingleProductVideoRequest(BaseModel):
         max_length=120,
     )
 
+    raw_clip_ids: list[str] = Field(
+        default_factory=list,
+        max_length=12,
+    )
+
     duration_seconds: int = Field(default=20)
     aspect_ratio: Literal["9:16", "1:1", "16:9"] = "9:16"
 
@@ -1102,6 +1107,16 @@ class SingleProductVideoRequest(BaseModel):
     cta: str | None = Field(
         default=None,
         max_length=140,
+    )
+
+    hook_image_asset_id: str | None = Field(
+        default=None,
+        max_length=120,
+    )
+
+    cta_image_asset_id: str | None = Field(
+        default=None,
+        max_length=120,
     )
 
     image_count: int = Field(
@@ -12590,32 +12605,27 @@ def render_single_product_video(
     temp_dir: Path,
     voiceover_path: Path | None = None,
 ) -> None:
-    raw_clip = config.get("raw_clip") or {}
-    archive = str(raw_clip.get("archive") or "").strip()
+    asset_items = [
+        item
+        for item in (config.get("asset_clips") or [])
+        if isinstance(item, dict)
+    ]
 
-    if not archive:
-        raise RuntimeError(
-            "Raw video single product belum dipilih"
-        )
+    if not asset_items:
+        raw_clip = config.get("raw_clip") or {}
+        if raw_clip:
+            asset_items.append(raw_clip)
 
-    raw_path = STORAGE_ROOT / archive
-
-    try:
-        raw_path.resolve().relative_to(
-            STORAGE_ROOT.resolve()
-        )
-    except ValueError:
-        raise RuntimeError(
-            "Raw video berada di luar storage"
-        )
-
-    if (
-        not raw_path.is_file()
-        or raw_path.stat().st_size < 10_000
+    for visual_key in (
+        "hook_visual_source",
+        "cta_visual_source",
     ):
-        raise RuntimeError(
-            "Raw video tidak ditemukan: " + archive
-        )
+        visual_source = config.get(visual_key)
+        if isinstance(visual_source, dict):
+            if visual_key.startswith("hook"):
+                asset_items.insert(0, visual_source)
+            else:
+                asset_items.append(visual_source)
 
     image_items = [
         item
@@ -12623,13 +12633,21 @@ def render_single_product_video(
         if isinstance(item, dict)
     ][:4]
 
+    if len(asset_items) < 2:
+        asset_items.extend(image_items)
+
+    if not asset_items:
+        raise RuntimeError(
+            "Asset image/video single product belum dipilih"
+        )
+
     duration = int(
         config.get("duration_seconds", 20)
     )
 
     segment_count = max(
         1,
-        1 + len(image_items),
+        len(asset_items),
     )
     segment_duration = max(
         2.5,
@@ -12638,23 +12656,66 @@ def render_single_product_video(
 
     segments: list[Path] = []
 
-    raw_segment = temp_dir / "single-product-001-raw.mp4"
-    render_raw_catalog_segment(
-        input_path=raw_path,
-        output_path=raw_segment,
-        aspect_ratio=config.get("aspect_ratio", "9:16"),
-        duration=segment_duration,
-        trim_start=float(raw_clip.get("trim_start") or 0.0),
-        trim_end=(
-            float(raw_clip["trim_end"])
-            if raw_clip.get("trim_end") is not None
-            else None
-        ),
-        fit_mode=str(raw_clip.get("fit_mode") or "cover"),
-    )
-    segments.append(raw_segment)
+    for index, source in enumerate(asset_items, start=1):
+        media_type = str(
+            source.get("media_type")
+            or source.get("asset_type")
+            or ""
+        ).lower()
+        mime_type = str(source.get("mime_type") or "").lower()
+        archive = str(
+            source.get("archive")
+            or source.get("path")
+            or ""
+        ).strip()
 
-    for index, source in enumerate(image_items, start=2):
+        if (
+            media_type == "video"
+            or mime_type.startswith("video/")
+        ):
+            if not archive:
+                raise RuntimeError(
+                    "Asset video single product belum lengkap"
+                )
+
+            raw_path = STORAGE_ROOT / archive
+            try:
+                raw_path.resolve().relative_to(
+                    STORAGE_ROOT.resolve()
+                )
+            except ValueError:
+                raise RuntimeError(
+                    "Asset video berada di luar storage"
+                )
+
+            if (
+                not raw_path.is_file()
+                or raw_path.stat().st_size < 10_000
+            ):
+                raise RuntimeError(
+                    "Asset video tidak ditemukan: " + archive
+                )
+
+            raw_segment = (
+                temp_dir
+                / f"single-product-{index:03d}-video.mp4"
+            )
+            render_raw_catalog_segment(
+                input_path=raw_path,
+                output_path=raw_segment,
+                aspect_ratio=config.get("aspect_ratio", "9:16"),
+                duration=segment_duration,
+                trim_start=float(source.get("trim_start") or 0.0),
+                trim_end=(
+                    float(source["trim_end"])
+                    if source.get("trim_end") is not None
+                    else None
+                ),
+                fit_mode=str(source.get("fit_mode") or "cover"),
+            )
+            segments.append(raw_segment)
+            continue
+
         image_segment = (
             temp_dir
             / f"single-product-{index:03d}-image.mp4"
@@ -18000,18 +18061,18 @@ def create_single_product_video_campaign(
         ).all()
     )
 
-    video_assets = [
+    selectable_assets = [
         asset
         for asset in assets
-        if asset.asset_type == "video"
+        if asset.asset_type in ("video", "image")
     ]
 
-    if not video_assets:
+    if not selectable_assets:
         raise HTTPException(
             status_code=422,
             detail=(
-                "Produk ini belum punya raw video. "
-                "Upload minimal 1 raw video dulu."
+                "Produk ini belum punya asset image/video. "
+                "Upload minimal 1 asset dulu."
             ),
         )
 
@@ -18019,122 +18080,166 @@ def create_single_product_video_campaign(
         product.id
     )
 
-    selected_video = None
-    requested_clip_id = str(
-        payload.raw_clip_id or ""
-    ).strip()
-
-    if requested_clip_id.startswith("asset-"):
+    def asset_from_clip_id(clip_id: str | None) -> ProductAsset | None:
+        value = str(clip_id or "").strip()
+        if not value.startswith("asset-"):
+            return None
         try:
-            requested_asset_id = int(
-                requested_clip_id.removeprefix("asset-")
-            )
+            asset_id = int(value.removeprefix("asset-"))
         except ValueError:
-            requested_asset_id = 0
-
-        selected_video = next(
+            return None
+        return next(
             (
                 asset
-                for asset in video_assets
-                if asset.id == requested_asset_id
+                for asset in selectable_assets
+                if asset.id == asset_id
             ),
             None,
         )
 
-    if selected_video is None:
-        selected_video = next(
+    def asset_to_single_clip(asset: ProductAsset) -> dict[str, Any]:
+        selected_settings = raw_settings.get(
+            str(asset.id),
+            {},
+        )
+
+        base = {
+            "clip_id": f"asset-{asset.id}",
+            "asset_id": asset.id,
+            "archive": asset.relative_path,
+            "path": asset.relative_path,
+            "label": asset.original_name,
+            "source": "uploaded",
+            "mime_type": asset.mime_type,
+            "media_type": asset.asset_type,
+            "asset_type": asset.asset_type,
+        }
+
+        if asset.asset_type == "image":
+            return {
+                **base,
+                "kind": "local",
+            }
+
+        absolute_video_path = (
+            STORAGE_ROOT
+            / asset.relative_path
+        )
+
+        if (
+            not absolute_video_path.is_file()
+            or absolute_video_path.stat().st_size < 10_000
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="File raw video produk tidak ditemukan",
+            )
+
+        source_metadata = probe_uploaded_raw_video(
+            absolute_video_path
+        )
+        source_orientation = source_metadata.get(
+            "orientation"
+        )
+
+        return {
+            **base,
+            "trim_start": float(
+                selected_settings.get("trim_start")
+                or 0.0
+            ),
+            "trim_end": (
+                float(selected_settings["trim_end"])
+                if selected_settings.get("trim_end")
+                is not None
+                else None
+            ),
+            "video_type": selected_settings.get(
+                "video_type",
+                "demo",
+            ),
+            "fit_mode": resolve_raw_catalog_fit_mode(
+                str(
+                    selected_settings.get("fit_mode")
+                    or "auto"
+                ),
+                str(
+                    selected_settings.get("video_type")
+                    or "demo"
+                ),
+                source_orientation,
+                payload.aspect_ratio,
+            ),
+            "source_orientation": source_orientation,
+            "source_width": source_metadata.get("width"),
+            "source_height": source_metadata.get("height"),
+            "source_duration_seconds": (
+                source_metadata.get("duration_seconds")
+            ),
+        }
+
+    requested_clip_ids: list[str] = []
+    for clip_id in payload.raw_clip_ids:
+        value = str(clip_id or "").strip()
+        if value and value not in requested_clip_ids:
+            requested_clip_ids.append(value)
+    legacy_clip_id = str(payload.raw_clip_id or "").strip()
+    if legacy_clip_id and legacy_clip_id not in requested_clip_ids:
+        requested_clip_ids.append(legacy_clip_id)
+
+    selected_assets = [
+        asset
+        for asset in (
+            asset_from_clip_id(clip_id)
+            for clip_id in requested_clip_ids
+        )
+        if asset is not None
+    ]
+
+    if not selected_assets:
+        primary_asset = next(
             (
                 asset
-                for asset in video_assets
+                for asset in selectable_assets
                 if bool(
                     raw_settings
                     .get(str(asset.id), {})
                     .get("is_primary")
                 )
             ),
-            video_assets[0],
+            selectable_assets[0],
         )
+        selected_assets = [primary_asset]
 
-    absolute_video_path = (
-        STORAGE_ROOT
-        / selected_video.relative_path
-    )
+    asset_clips = [
+        asset_to_single_clip(asset)
+        for asset in selected_assets[:12]
+    ]
 
-    if (
-        not absolute_video_path.is_file()
-        or absolute_video_path.stat().st_size < 10_000
-    ):
-        raise HTTPException(
-            status_code=422,
-            detail="File raw video produk tidak ditemukan",
-        )
+    raw_clip = asset_clips[0]
 
-    selected_settings = raw_settings.get(
-        str(selected_video.id),
-        {},
-    )
-
-    source_metadata = probe_uploaded_raw_video(
-        absolute_video_path
-    )
-    source_orientation = source_metadata.get(
-        "orientation"
-    )
-
-    raw_clip = {
-        "clip_id": f"asset-{selected_video.id}",
-        "asset_id": selected_video.id,
-        "archive": selected_video.relative_path,
-        "label": selected_video.original_name,
-        "source": "uploaded",
-        "mime_type": selected_video.mime_type,
-        "trim_start": float(
-            selected_settings.get("trim_start")
-            or 0.0
-        ),
-        "trim_end": (
-            float(selected_settings["trim_end"])
-            if selected_settings.get("trim_end")
-            is not None
-            else None
-        ),
-        "video_type": selected_settings.get(
-            "video_type",
-            "demo",
-        ),
-        "fit_mode": resolve_raw_catalog_fit_mode(
-            str(
-                selected_settings.get("fit_mode")
-                or "auto"
-            ),
-            str(
-                selected_settings.get("video_type")
-                or "demo"
-            ),
-            source_orientation,
-            payload.aspect_ratio,
-        ),
-        "source_orientation": source_orientation,
-        "source_width": source_metadata.get("width"),
-        "source_height": source_metadata.get("height"),
-        "source_duration_seconds": (
-            source_metadata.get("duration_seconds")
-        ),
-    }
+    def selected_image_source(clip_id: str | None) -> dict[str, Any] | None:
+        asset = asset_from_clip_id(clip_id)
+        if asset is None:
+            return None
+        if asset.asset_type != "image":
+            raise HTTPException(
+                status_code=422,
+                detail="Hook/CTA image harus memakai asset image",
+            )
+        return asset_to_single_clip(asset)
 
     image_items = image_sources(
         product,
         assets,
     )[:payload.image_count]
 
-    if not image_items:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "Produk ini belum punya image referensi "
-                "untuk single product campaign."
-            ),
-        )
+    hook_visual_source = selected_image_source(
+        payload.hook_image_asset_id
+    )
+    cta_visual_source = selected_image_source(
+        payload.cta_image_asset_id
+    )
 
     price_label = (
         format_rupiah(product.price_value)
@@ -18190,7 +18295,10 @@ def create_single_product_video_campaign(
             "product_count": 1,
             "price_label": price_label,
             "raw_clip": raw_clip,
+            "asset_clips": asset_clips,
             "image_source_count": len(image_items),
+            "hook_visual_source": hook_visual_source,
+            "cta_visual_source": cta_visual_source,
             "voiceover": {
                 "enabled": bool(
                     payload.voiceover_enabled
@@ -18225,7 +18333,10 @@ def create_single_product_video_campaign(
         "duration_seconds": payload.duration_seconds,
         "aspect_ratio": payload.aspect_ratio,
         "raw_clip": raw_clip,
+        "asset_clips": asset_clips,
         "image_sources": image_items,
+        "hook_visual_source": hook_visual_source,
+        "cta_visual_source": cta_visual_source,
         "creative_template": "single_product",
         "creative_template_label": (
             "Single Product Campaign"

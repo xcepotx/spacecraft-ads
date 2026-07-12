@@ -1769,6 +1769,19 @@ input {
     grid-template-columns: repeat(2, minmax(220px, 1fr));
 }
 
+.single-product-campaign select[multiple] {
+    min-height: 132px;
+    padding: 10px 12px;
+}
+
+.single-product-campaign .field small {
+    color: #667085;
+    display: block;
+    font-size: 12px;
+    line-height: 1.45;
+    margin-top: 6px;
+}
+
 .single-product-actions {
     display: flex;
     align-items: center;

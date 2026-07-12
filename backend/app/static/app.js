@@ -97,6 +97,12 @@ const singleProductSelect =
 const singleProductRawVideoSelect =
     document.getElementById("singleProductRawVideoSelect");
 
+const singleProductHookImageSelect =
+    document.getElementById("singleProductHookImageSelect");
+
+const singleProductCtaImageSelect =
+    document.getElementById("singleProductCtaImageSelect");
+
 const singleProductGenerateButton =
     document.getElementById(
         "singleProductGenerateButton"
@@ -2184,6 +2190,18 @@ async function loadSingleProductRawVideos(productId) {
         <option value="">Memuat asset...</option>
     `;
     singleProductRawVideoSelect.disabled = true;
+    if (singleProductHookImageSelect) {
+        singleProductHookImageSelect.innerHTML = `
+            <option value="">Auto generate jika kosong</option>
+        `;
+        singleProductHookImageSelect.disabled = true;
+    }
+    if (singleProductCtaImageSelect) {
+        singleProductCtaImageSelect.innerHTML = `
+            <option value="">Auto generate jika kosong</option>
+        `;
+        singleProductCtaImageSelect.disabled = true;
+    }
 
     if (!productId) {
         singleProductRawVideoSelect.innerHTML = `
@@ -2210,11 +2228,40 @@ async function loadSingleProductRawVideos(productId) {
 
         singleProductRawVideoSelect.innerHTML = rawVideos.map(video => `
             <option value="${escapeHtml(video.clip_id)}">
-                ${video.is_primary ? "Utama - " : ""}
-                ${escapeHtml(video.label || video.title || video.clip_id)}
+                ${escapeHtml(rawVideoLabel(video))}
             </option>
         `).join("");
         singleProductRawVideoSelect.disabled = false;
+
+        const imageAssets = rawVideos.filter(video =>
+            String(video.media_type || video.asset_type || "")
+                .toLowerCase() === "image"
+            || String(video.mime_type || "")
+                .toLowerCase()
+                .startsWith("image/")
+        );
+
+        const imageOptions = imageAssets.map(video => `
+            <option value="${escapeHtml(video.clip_id)}">
+                ${escapeHtml(rawVideoLabel(video))}
+            </option>
+        `).join("");
+
+        if (singleProductHookImageSelect) {
+            singleProductHookImageSelect.innerHTML = `
+                <option value="">Auto generate jika kosong</option>
+                ${imageOptions}
+            `;
+            singleProductHookImageSelect.disabled = !imageAssets.length;
+        }
+
+        if (singleProductCtaImageSelect) {
+            singleProductCtaImageSelect.innerHTML = `
+                <option value="">Auto generate jika kosong</option>
+                ${imageOptions}
+            `;
+            singleProductCtaImageSelect.disabled = !imageAssets.length;
+        }
     } catch (error) {
         singleProductRawVideoSelect.innerHTML = `
             <option value="">Gagal memuat asset</option>
@@ -2224,6 +2271,14 @@ async function loadSingleProductRawVideos(productId) {
                 `Raw video gagal dimuat: ${error.message}`;
         }
     }
+}
+
+
+function selectedSingleProductAssetIds() {
+    if (!singleProductRawVideoSelect) return [];
+    return Array.from(singleProductRawVideoSelect.selectedOptions || [])
+        .map(option => option.value)
+        .filter(Boolean);
 }
 
 
@@ -2363,10 +2418,10 @@ async function generateSingleProductCampaign() {
         return;
     }
 
-    const rawClipId =
-        singleProductRawVideoSelect?.value || null;
+    const rawClipIds = selectedSingleProductAssetIds();
+    const rawClipId = rawClipIds[0] || null;
 
-    if (!rawClipId) {
+    if (!rawClipIds.length) {
         if (singleProductMessage) {
             singleProductMessage.textContent =
                 "Produk ini belum punya asset image/video yang dipilih.";
@@ -2415,6 +2470,7 @@ async function generateSingleProductCampaign() {
         const payload = {
             product_id: productId,
             raw_clip_id: rawClipId,
+            raw_clip_ids: rawClipIds,
             name: selectedProduct
                 ? `${selectedProduct.name} Single Product Video`
                 : null,
@@ -2432,6 +2488,10 @@ async function generateSingleProductCampaign() {
                 document.getElementById(
                     "singleProductCta"
                 )?.value.trim() || null,
+            hook_image_asset_id:
+                singleProductHookImageSelect?.value || null,
+            cta_image_asset_id:
+                singleProductCtaImageSelect?.value || null,
             image_count: 4,
             voiceover_enabled: singleVoiceEnabled,
             voice_id: singleVoiceEnabled
